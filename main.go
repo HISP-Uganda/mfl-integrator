@@ -3,12 +3,26 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/buger/jsonparser"
+	"github.com/gcinnovate/integrator/controllers"
+	"github.com/gin-gonic/gin"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"net/url"
+	"os"
+	"time"
 )
+
+func init() {
+	formatter := new(log.TextFormatter)
+	formatter.TimestampFormat = time.RFC3339
+	formatter.FullTimestamp = true
+	log.SetFormatter(formatter)
+	log.SetOutput(os.Stdout)
+}
 
 type LocationEntry struct {
 	FullURL  string        `json:"fullUrl"`
@@ -17,11 +31,11 @@ type LocationEntry struct {
 
 func main() {
 	fmt.Println("MFL Integrator v1")
-	baseURL := "https://mediator-api-staging.health.go.ug/nhfrApi/v0.0.1/externalSystem/search"
+	baseURL := config.MFLIntegratorConf.API.MFLBaseURL
 	parameters := url.Values{}
-	parameters.Add("count", "10")
+	parameters.Add("count", "1")
 	parameters.Add("levelOfCare", "HC IV")
-	baseURL += "?" + parameters.Encode()
+	baseURL += "/search?" + parameters.Encode()
 
 	resp, _ := utils.GetRequest(baseURL, "postman", "password")
 
@@ -74,4 +88,29 @@ func main() {
 		}
 	}
 	// fmt.Printf("Body: %s\n", body)
+}
+
+func startAPIServer() {
+	// defer wg.Done()
+	router := gin.Default()
+	// done := make(chan bool)
+	v2 := router.Group("/api", BasicAuth())
+	{
+		v2.GET("/test2", func(c *gin.Context) {
+			c.String(200, "Authorized")
+		})
+
+		q := new(controllers.QueueController)
+		v2.POST("/queue", q.Queue)
+		v2.GET("/queue", q.Requests)
+		v2.GET("/queue/:id", q.GetRequest)
+		v2.DELETE("/queue/:id", q.DeleteRequest)
+
+	}
+	// Handle error response when a route is not defined
+	router.NoRoute(func(c *gin.Context) {
+		c.String(404, "Page Not Found!")
+	})
+
+	router.Run(":" + fmt.Sprintf("%d", config.MFLIntegratorConf.Server.Port))
 }

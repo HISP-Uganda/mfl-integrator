@@ -69,8 +69,8 @@ type Config struct {
 		URI        string `mapstructure:"uri" env:"MFLINTEGRATOR_DB" env-default:"postgres://postgres:postgres@localhost/mfldb?sslmode=disable"`
 		DBHost     string `mapstructure:"db_host" env:"MFLINTEGRATOR_DB_HOST" env-default:"localhost"`
 		DBPort     string `mapstructure:"db_port" env:"MFLINTEGRATOR_DB_PORT" env-default:"5432"`
-		DBUsername string `mapstructure:"db_username" env:"MFLINTEGRATOR_USER" env-description:"API user name"`
-		DBPassword string `mapstructure:"db_password" env:"MFLINTEGRATOR_PASSWORD" env-description:"API user password"`
+		DBUsername string `mapstructure:"db_username" env:"MFLINTEGRATOR_DB_USER" env-description:"API user name"`
+		DBPassword string `mapstructure:"db_password" env:"MFLINTEGRATOR_DB_PASSWORD" env-description:"API user password"`
 	} `yaml:"database"`
 
 	Server struct {
@@ -90,9 +90,11 @@ type Config struct {
 	} `yaml:"server"`
 
 	API struct {
-		// BaseMFLURL string ``
-		Email     string `yaml:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
-		AuthToken string `yaml:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
-		SmsURL    string `yaml:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`
+		MFLBaseURL  string `mapstructure:"mfl_base_url" env:"MFLINTEGRATOR_BASE_URL" env-description:"The MFL base API URL"`
+		MFLUser     string `mapstructure:"mfl_user"  env:"MFLINTEGRATOR_USER" env-description:"The MFL API username"`
+		MFLPassword string `mapstructure:"mfl_password"  env:"MFLINTEGRATOR_PASSWORD" env-description:"The MFL API user password"`
+		Email       string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
+		AuthToken   string `mapstructure:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
+		SmsURL      string `mapstructure:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`
 	} `yaml:"api"`
 }

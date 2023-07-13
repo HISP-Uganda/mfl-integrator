@@ -14,5 +14,8 @@ server:
   logdir: "/var/log/dispatcher2"
 
 api:
+  mfl_base_url: ""
+  mfl_user: ""
+  mfl_password: ""
   authtoken: ABC
   smsurl: ""
