@@ -8,11 +8,13 @@ import (
 	"github.com/buger/jsonparser"
 	"github.com/gcinnovate/integrator/controllers"
 	"github.com/gin-gonic/gin"
+	"github.com/jmoiron/sqlx"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -30,6 +32,25 @@ type LocationEntry struct {
 }
 
 func main() {
+	dbConn, err := sqlx.Connect("postgres", config.MFLIntegratorConf.Database.URI)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+
+	// Start the producer goroutine
+	wg.Add(1)
+	go Produce(dbConn, jobs, &wg)
+
+	// Start the consumer goroutine
+	wg.Add(1)
+	go StartConsumers(jobs, &wg)
+
+	// Start the backend API gin server
+	wg.Add(1)
+	go startAPIServer(&wg)
+
 	fmt.Println("MFL Integrator v1")
 	baseURL := config.MFLIntegratorConf.API.MFLBaseURL
 	parameters := url.Values{}
@@ -88,12 +109,12 @@ func main() {
 		}
 	}
 	// fmt.Printf("Body: %s\n", body)
+	wg.Wait()
 }
 
-func startAPIServer() {
-	// defer wg.Done()
+func startAPIServer(wg *sync.WaitGroup) {
+	defer wg.Done()
 	router := gin.Default()
-	// done := make(chan bool)
 	v2 := router.Group("/api", BasicAuth())
 	{
 		v2.GET("/test2", func(c *gin.Context) {

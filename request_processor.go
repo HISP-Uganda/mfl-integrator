@@ -178,6 +178,7 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 	return resp, nil
 }
 
+//Produce gets all the ready requests in the queue
 func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Println("Producer staring:!!!")
@@ -216,7 +217,7 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup) {
 	}
 }
 
-// consume is the consumer go routine
+// Consume is the consumer go routine
 func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	fmt.Println("Calling Consumer")
@@ -299,4 +300,24 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup) {
 		tx.Commit()
 	}
 
+}
+
+// StartConsumers starts the consumer go routines
+func StartConsumers(jobs <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	dbURI := config.MFLIntegratorConf.Database.URI
+
+	fmt.Printf("Going to create %d Consumers!!!!!\n", config.MFLIntegratorConf.Server.MaxConcurrent)
+	for i := 1; i <= config.MFLIntegratorConf.Server.MaxConcurrent; i++ {
+
+		newConn, err := sqlx.Connect("postgres", dbURI)
+		if err != nil {
+			log.Fatalln("Request processor failed to connect to database: %v", err)
+		}
+		fmt.Printf("Adding Consumer: %d\n", i)
+		wg.Add(1)
+		go Consume(newConn, i, jobs, wg)
+	}
+	log.WithFields(log.Fields{"MaxConsumers": config.MFLIntegratorConf.Server.MaxConcurrent}).Info("Created Consumers: ")
 }

@@ -1,5 +1,5 @@
 database:
-  uri: "postgres://postgres:postgres@localhost/mfld?sslmode=disable"
+  uri: "postgres://postgres:postgres@localhost/mfldb?sslmode=disable"
   db_host: "localhost"
   db_port: "5432"
   db_username: "postgres"
