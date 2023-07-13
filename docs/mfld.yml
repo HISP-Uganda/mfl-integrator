@@ -1,0 +1,18 @@
+database:
+  uri: "postgres://postgres:postgres@localhost/mfld?sslmode=disable"
+  db_host: "localhost"
+  db_port: "5432"
+  db_username: "postgres"
+  db_password: "postgres"
+
+server:
+  host: "localhost"
+  http_port: 9090
+  max_retries: 3
+  max_concurrent: 5
+  request_process_interval: 4
+  logdir: "/var/log/dispatcher2"
+
+api:
+  authtoken: ABC
+  smsurl: ""

@@ -1,0 +1,77 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"github.com/HISP-Uganda/mfl-integrator/utils"
+	"github.com/buger/jsonparser"
+	"github.com/samply/golang-fhir-models/fhir-models/fhir"
+	"io"
+	"net/url"
+)
+
+type LocationEntry struct {
+	FullURL  string        `json:"fullUrl"`
+	Resource fhir.Location `json:"resource"`
+}
+
+func main() {
+	fmt.Println("MFL Integrator v1")
+	baseURL := "https://mediator-api-staging.health.go.ug/nhfrApi/v0.0.1/externalSystem/search"
+	parameters := url.Values{}
+	parameters.Add("count", "10")
+	parameters.Add("levelOfCare", "HC IV")
+	baseURL += "?" + parameters.Encode()
+
+	resp, _ := utils.GetRequest(baseURL, "postman", "password")
+
+	// fmt.Printf("%v", resp)
+	defer resp.Body.Close()
+
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err)
+		return
+	}
+	if resp.StatusCode/100 == 2 {
+		v, _, _, _ := jsonparser.Get(body, "data", "entry")
+		fmt.Printf("DATA: %s", v)
+		var entries []LocationEntry
+		err = json.Unmarshal(v, &entries)
+		if err != nil {
+			fmt.Println("Error unmarshaling response body:", err)
+			return
+		}
+		// fmt.Printf("Our Bundle: %v\n", *bundle.Meta.LastUpdated)
+		fmt.Printf("Records Found: %v\n", len(entries))
+		// :w
+		extensions := make(map[string]interface{})
+		for i := range entries {
+			for e := range entries[i].Resource.Extension {
+				if entries[i].Resource.Extension[e].ValueCode != nil {
+					fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueCode)
+					extensions[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueCode
+				}
+				if entries[i].Resource.Extension[e].ValueString != nil {
+					fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueString)
+					extensions[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueString
+
+				}
+				if entries[i].Resource.Extension[e].ValueInteger != nil {
+					fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueInteger)
+					extensions[entries[i].Resource.Extension[e].Url] = fmt.Sprintf(
+						"%d", *entries[i].Resource.Extension[e].ValueInteger)
+
+				}
+
+			}
+
+			fmt.Printf("Entry: %s\n", extensions)
+			fmt.Printf("Entry: %s\n", *entries[i].Resource.Name)
+			fmt.Printf("Parent Reference: %s\n", *entries[i].Resource.PartOf.Reference)
+			fmt.Printf("Parent DisplayName: %s\n", *entries[i].Resource.PartOf.Display)
+		}
+	}
+	// fmt.Printf("Body: %s\n", body)
+}
