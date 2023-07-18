@@ -2,24 +2,63 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 CREATE EXTENSION xml2;
 
+CREATE TABLE orgunitlevel(
+    id SERIAL NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE,
+    name VARCHAR(230) NOT NULL UNIQUE,
+    code VARCHAR(50)  UNIQUE,
+    level INTEGER NOT NULL UNIQUE,
+    created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE orgunitgroup(
+    id SERIAL NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE ,
+    code VARCHAR(50)  UNIQUE,
+    name VARCHAR(230) NOT NULL UNIQUE ,
+    shortname VARCHAR(50) NOT NULL DEFAULT '' UNIQUE ,
+    level INTEGER NOT NULL,
+    created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+
+);
+CREATE INDEX orgunitgroup_name_idx ON orgunitgroup(id);
+
 CREATE TABLE organisationunit(
     id BIGSERIAL NOT NULL PRIMARY KEY,
-    uid TEXT NOT NULL DEFAULT '',
-    code TEXT NOT NULL DEFAULT '',
+    uid TEXT NOT NULL UNIQUE,
+    code VARCHAR(50),
     name TEXT NOT NULL DEFAULT '',
+    shortname TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
-    parentid BIGSERIAL REFERENCES organisationunit(id),
+    parentid BIGINT REFERENCES organisationunit(id),
     hierarchylevel INTEGER NOT NULL,
-    path TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE,
     address TEXT NOT NULL DEFAULT '',
     email TEXT NOT NULL DEFAULT '',
     url TEXT NOT NULL DEFAULT '',
     phonenumber TEXT NOT NULL DEFAULT '',
     extras JSONB NOT NULL DEFAULT '{}'::jsonb,
     attributevalues JSONB NOT NULL DEFAULT '{}'::jsonb,
+    mflid TEXT,
+    openingdate DATE,
     deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    lastsyncdate TIMESTAMPTZ,
     created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX organisationunit_level_idx ON organisationunit(hierarchylevel);
+CREATE INDEX organisationunit_path_idx ON organisationunit(path);
+CREATE INDEX organisationunit_parent_idx ON organisationunit(parentid);
+
+CREATE TABLE orgunitgroupmembers(
+    organisationunitid BIGSERIAL REFERENCES organisationunit(id),
+    orgunitgroupid SERIAL REFERENCES orgunitgroup(id),
+    created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+
 );
 
 CREATE TABLE IF NOT EXISTS user_roles (
@@ -202,6 +241,22 @@ BEGIN
     RETURN t;
 END;
 $delim$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION ou_paraent_from_path(ipath text, lvl INT) RETURNS BIGINT AS $delim$
+DECLARE
+    i BIGINT;
+    parent_uid TEXT;
+BEGIN
+    SELECT  split_part(ipath, '/', lvl) INTO  parent_uid;
+    IF FOUND THEN
+
+        SELECT id INTO i FROM organisationunit WHERE uid = parent_uid;
+        RETURN i;
+    END IF;
+    RETURN NULL;
+END;
+$delim$ LANGUAGE plpgsql;
+
 
 CREATE OR REPLACE FUNCTION get_server_apps(xid INT) RETURNS TEXT AS
 $delim$

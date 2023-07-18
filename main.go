@@ -4,14 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
+	"github.com/HISP-Uganda/mfl-integrator/controllers"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/buger/jsonparser"
-	"github.com/gcinnovate/integrator/controllers"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
 	log "github.com/sirupsen/logrus"
-	"io"
 	"net/url"
 	"os"
 	"sync"
@@ -36,6 +35,9 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	LoadLocations() // Load organisation units - before facility in base DHIS2 instance
+	os.Exit(1)
+
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 
@@ -54,30 +56,24 @@ func main() {
 	fmt.Println("MFL Integrator v1")
 	baseURL := config.MFLIntegratorConf.API.MFLBaseURL
 	parameters := url.Values{}
-	parameters.Add("count", "1")
-	parameters.Add("levelOfCare", "HC IV")
-	baseURL += "/search?" + parameters.Encode()
+	parameters.Add("resource", "Location")
+	parameters.Add("type", "healthFacility")
+	parameters.Add("_count", "1")
+	parameters.Add("facilityLevelOfCare", "HC IV")
+	baseURL += "?" + parameters.Encode()
 
-	resp, _ := utils.GetRequest(baseURL, "postman", "password")
+	body, _ := utils.GetRequest(baseURL)
 
-	// fmt.Printf("%v", resp)
-	defer resp.Body.Close()
-
-	// Read the response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return
-	}
-	if resp.StatusCode/100 == 2 {
-		v, _, _, _ := jsonparser.Get(body, "data", "entry")
-		fmt.Printf("DATA: %s", v)
+	if body != nil {
+		v, _, _, _ := jsonparser.Get(body, "entry")
+		fmt.Printf("Entries: %s", v)
 		var entries []LocationEntry
-		err = json.Unmarshal(v, &entries)
+		err := json.Unmarshal(v, &entries)
 		if err != nil {
 			fmt.Println("Error unmarshaling response body:", err)
 			return
 		}
+
 		// fmt.Printf("Our Bundle: %v\n", *bundle.Meta.LastUpdated)
 		fmt.Printf("Records Found: %v\n", len(entries))
 		// :w
@@ -85,16 +81,16 @@ func main() {
 		for i := range entries {
 			for e := range entries[i].Resource.Extension {
 				if entries[i].Resource.Extension[e].ValueCode != nil {
-					fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueCode)
+					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueCode)
 					extensions[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueCode
 				}
 				if entries[i].Resource.Extension[e].ValueString != nil {
-					fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueString)
+					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueString)
 					extensions[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueString
 
 				}
 				if entries[i].Resource.Extension[e].ValueInteger != nil {
-					fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueInteger)
+					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueInteger)
 					extensions[entries[i].Resource.Extension[e].Url] = fmt.Sprintf(
 						"%d", *entries[i].Resource.Extension[e].ValueInteger)
 
@@ -102,14 +98,75 @@ func main() {
 
 			}
 
-			fmt.Printf("Entry: %s\n", extensions)
-			fmt.Printf("Entry: %s\n", *entries[i].Resource.Name)
-			fmt.Printf("Parent Reference: %s\n", *entries[i].Resource.PartOf.Reference)
-			fmt.Printf("Parent DisplayName: %s\n", *entries[i].Resource.PartOf.Display)
+			//fmt.Printf("Entry: %s\n", extensions)
+			//fmt.Printf("Entry: %s\n", *entries[i].Resource.Name)
+			//fmt.Printf("Parent Reference: %s\n", *entries[i].Resource.PartOf.Reference)
+			//fmt.Printf("Parent DisplayName: %s\n", *entries[i].Resource.PartOf.Display)
 		}
 	}
-	// fmt.Printf("Body: %s\n", body)
+	// fmt.Printf("Districts: %v\n", getDistricts())
+	districts := getDistricts()
+	for i := range districts {
+		fmt.Println(districts[i]["name"])
+	}
 	wg.Wait()
+}
+
+func getDistricts() []map[string]interface{} {
+	baseURL := config.MFLIntegratorConf.API.MFLBaseURL
+	params := url.Values{}
+	params.Add("resource", "Location")
+	params.Add("type", "Local Government")
+	params.Add("_count", "200") // We have less than 200 districts
+	baseURL += "?" + params.Encode()
+
+	body, _ := utils.GetRequest(baseURL)
+	// fmt.Printf("BODY:%v\n", string(body))
+	// Read the response body
+	var districtList []map[string]interface{}
+	if body != nil {
+		v, _, _, _ := jsonparser.Get(body, "entry")
+		var entries []LocationEntry
+		err := json.Unmarshal(v, &entries)
+		if err != nil {
+			fmt.Println("Error unmarshaling response body:", err)
+			return nil
+		}
+
+		for i := range entries {
+			district := make(map[string]interface{})
+			district["id"] = *entries[i].Resource.Id
+			district["name"] = *entries[i].Resource.Name
+			district["parent"] = *entries[i].Resource.PartOf.Reference
+			for e := range entries[i].Resource.Extension {
+				if entries[i].Resource.Extension[e].ValueCode != nil {
+					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueCode)
+					district[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueCode
+				}
+				if entries[i].Resource.Extension[e].ValueString != nil {
+					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueString)
+					district[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueString
+
+				}
+				if entries[i].Resource.Extension[e].ValueInteger != nil {
+					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueInteger)
+					district[entries[i].Resource.Extension[e].Url] = fmt.Sprintf(
+						"%d", *entries[i].Resource.Extension[e].ValueInteger)
+
+				}
+
+			}
+
+			//fmt.Printf("Entry: %s\n", district)
+			//fmt.Printf("Entry: %s\n", *entries[i].Resource.Name)
+			//fmt.Printf("Parent Reference: %s\n", *entries[i].Resource.PartOf.Reference)
+			//fmt.Printf("Parent DisplayName: %s\n", *entries[i].Resource.PartOf.Display)
+			districtList = append(districtList, district)
+		}
+		return districtList
+	}
+
+	return nil
 }
 
 func startAPIServer(wg *sync.WaitGroup) {
@@ -127,11 +184,14 @@ func startAPIServer(wg *sync.WaitGroup) {
 		v2.GET("/queue/:id", q.GetRequest)
 		v2.DELETE("/queue/:id", q.DeleteRequest)
 
+		ou := new(controllers.OrgUnitController)
+		v2.POST("/organisationUnit", ou.OrgUnit)
+
 	}
 	// Handle error response when a route is not defined
 	router.NoRoute(func(c *gin.Context) {
 		c.String(404, "Page Not Found!")
 	})
 
-	router.Run(":" + fmt.Sprintf("%d", config.MFLIntegratorConf.Server.Port))
+	router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
 }

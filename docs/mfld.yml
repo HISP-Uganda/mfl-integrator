@@ -17,5 +17,10 @@ api:
   mfl_base_url: ""
   mfl_user: ""
   mfl_password: ""
+  mfl_dhis2_base_url: ""
+  mfl_dhis2_username: ""
+  mfl_dhis2_password: ""
+  mfl_dhis2_pat: ""
+  mfl_dhis2_facility_level: 5
   authtoken: ABC
   smsurl: ""
