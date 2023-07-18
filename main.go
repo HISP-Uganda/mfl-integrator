@@ -36,7 +36,6 @@ func main() {
 		log.Fatalln(err)
 	}
 	LoadLocations() // Load organisation units - before facility in base DHIS2 instance
-	os.Exit(1)
 
 	jobs := make(chan int)
 	var wg sync.WaitGroup

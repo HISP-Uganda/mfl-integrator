@@ -9,13 +9,6 @@ import (
 	// "net/http"
 )
 
-const insertOrgUnitSQL = `
-INSERT INTO organisationunit (uid,name, shortname,path, parentid, hierarchylevel,address,
-        email,phonenumber,url,mflid,extras,openingdate, created, updated)
-VALUES (:uid, :name,  :shortname, :path, ou_paraent_from_path(:path, :hierarchylevel), 
-        :hierarchylevel, :address, :email, :phonenumber, :url, :mflid, :extras, :openingdate, now(), now())
-`
-
 // OrgUnitController defines the orgunit request controller methods
 type OrgUnitController struct{}
 
