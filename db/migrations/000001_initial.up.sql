@@ -1,5 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS plpython3u;
+CREATE EXTENSION postgis;
 CREATE EXTENSION xml2;
 
 CREATE TABLE orgunitlevel(
@@ -18,7 +19,6 @@ CREATE TABLE orgunitgroup(
     code VARCHAR(50)  UNIQUE,
     name VARCHAR(230) NOT NULL UNIQUE ,
     shortname VARCHAR(50) NOT NULL DEFAULT '' UNIQUE ,
-    level INTEGER NOT NULL,
     created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 
@@ -42,8 +42,10 @@ CREATE TABLE organisationunit(
     extras JSONB NOT NULL DEFAULT '{}'::jsonb,
     attributevalues JSONB NOT NULL DEFAULT '{}'::jsonb,
     mflid TEXT,
+    mfluid TEXT,
     openingdate DATE,
     deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    geometry geometry(Geometry,4326),
     lastsyncdate TIMESTAMPTZ,
     created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP

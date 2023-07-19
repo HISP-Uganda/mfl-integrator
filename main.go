@@ -35,6 +35,8 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	LoadOuLevels()
+	LoadOuGroups()
 	LoadLocations() // Load organisation units - before facility in base DHIS2 instance
 
 	jobs := make(chan int)
@@ -137,29 +139,7 @@ func getDistricts() []map[string]interface{} {
 			district["id"] = *entries[i].Resource.Id
 			district["name"] = *entries[i].Resource.Name
 			district["parent"] = *entries[i].Resource.PartOf.Reference
-			for e := range entries[i].Resource.Extension {
-				if entries[i].Resource.Extension[e].ValueCode != nil {
-					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueCode)
-					district[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueCode
-				}
-				if entries[i].Resource.Extension[e].ValueString != nil {
-					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueString)
-					district[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueString
 
-				}
-				if entries[i].Resource.Extension[e].ValueInteger != nil {
-					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueInteger)
-					district[entries[i].Resource.Extension[e].Url] = fmt.Sprintf(
-						"%d", *entries[i].Resource.Extension[e].ValueInteger)
-
-				}
-
-			}
-
-			//fmt.Printf("Entry: %s\n", district)
-			//fmt.Printf("Entry: %s\n", *entries[i].Resource.Name)
-			//fmt.Printf("Parent Reference: %s\n", *entries[i].Resource.PartOf.Reference)
-			//fmt.Printf("Parent DisplayName: %s\n", *entries[i].Resource.PartOf.Display)
 			districtList = append(districtList, district)
 		}
 		return districtList
@@ -192,5 +172,5 @@ func startAPIServer(wg *sync.WaitGroup) {
 		c.String(404, "Page Not Found!")
 	})
 
-	router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
+	_ = router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
 }
