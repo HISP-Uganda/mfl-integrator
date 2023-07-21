@@ -30,14 +30,25 @@ type LocationEntry struct {
 	Resource fhir.Location `json:"resource"`
 }
 
+var splash = `
+┏┳┓┏━╸╻     ╺┳╸┏━┓   ╺┳┓╻ ╻╻┏━┓┏━┓
+┃┃┃┣╸ ┃      ┃ ┃ ┃    ┃┃┣━┫┃┗━┓┏━┛
+╹ ╹╹  ┗━╸    ╹ ┗━┛   ╺┻┛╹ ╹╹┗━┛┗━
+`
+
 func main() {
+	fmt.Printf(splash)
 	dbConn, err := sqlx.Connect("postgres", config.MFLIntegratorConf.Database.URI)
 	if err != nil {
 		log.Fatalln(err)
 	}
+
 	LoadOuLevels()
 	LoadOuGroups()
 	LoadLocations() // Load organisation units - before facility in base DHIS2 instance
+	MatchLocationsWithMFL()
+
+	FetchFacilities()
 
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -54,62 +65,41 @@ func main() {
 	wg.Add(1)
 	go startAPIServer(&wg)
 
-	fmt.Println("MFL Integrator v1")
-	baseURL := config.MFLIntegratorConf.API.MFLBaseURL
-	parameters := url.Values{}
-	parameters.Add("resource", "Location")
-	parameters.Add("type", "healthFacility")
-	parameters.Add("_count", "1")
-	parameters.Add("facilityLevelOfCare", "HC IV")
-	baseURL += "?" + parameters.Encode()
-
-	body, _ := utils.GetRequest(baseURL)
-
-	if body != nil {
-		v, _, _, _ := jsonparser.Get(body, "entry")
-		fmt.Printf("Entries: %s", v)
-		var entries []LocationEntry
-		err := json.Unmarshal(v, &entries)
-		if err != nil {
-			fmt.Println("Error unmarshaling response body:", err)
-			return
-		}
-
-		// fmt.Printf("Our Bundle: %v\n", *bundle.Meta.LastUpdated)
-		fmt.Printf("Records Found: %v\n", len(entries))
-		// :w
-		extensions := make(map[string]interface{})
-		for i := range entries {
-			for e := range entries[i].Resource.Extension {
-				if entries[i].Resource.Extension[e].ValueCode != nil {
-					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueCode)
-					extensions[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueCode
-				}
-				if entries[i].Resource.Extension[e].ValueString != nil {
-					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueString)
-					extensions[entries[i].Resource.Extension[e].Url] = *entries[i].Resource.Extension[e].ValueString
-
-				}
-				if entries[i].Resource.Extension[e].ValueInteger != nil {
-					// fmt.Printf("%v\n", *entries[i].Resource.Extension[e].ValueInteger)
-					extensions[entries[i].Resource.Extension[e].Url] = fmt.Sprintf(
-						"%d", *entries[i].Resource.Extension[e].ValueInteger)
-
-				}
-
-			}
-
-			//fmt.Printf("Entry: %s\n", extensions)
-			//fmt.Printf("Entry: %s\n", *entries[i].Resource.Name)
-			//fmt.Printf("Parent Reference: %s\n", *entries[i].Resource.PartOf.Reference)
-			//fmt.Printf("Parent DisplayName: %s\n", *entries[i].Resource.PartOf.Display)
-		}
-	}
+	//fmt.Println("MFL Integrator v1")
+	//baseURL := config.MFLIntegratorConf.API.MFLBaseURL
+	//parameters := url.Values{}
+	//parameters.Add("resource", "Location")
+	//parameters.Add("type", "healthFacility")
+	//parameters.Add("_count", "1")
+	//parameters.Add("facilityLevelOfCare", "HC IV")
+	//baseURL += "?" + parameters.Encode()
+	//
+	//body, _ := utils.GetRequest(baseURL)
+	//
+	//if body != nil {
+	//	v, _, _, _ := jsonparser.Get(body, "entry")
+	//	fmt.Printf("Entries: %s", v)
+	//	var entries []LocationEntry
+	//	err := json.Unmarshal(v, &entries)
+	//	if err != nil {
+	//		fmt.Println("Error unmarshaling response body:", err)
+	//		return
+	//	}
+	//
+	//	// fmt.Printf("Our Bundle: %v\n", *bundle.Meta.LastUpdated)
+	//	fmt.Printf("Records Found: %v\n", len(entries))
+	//	// :w
+	//	extensions := make(map[string]any)
+	//	for i := range entries {
+	//		extensions = GetExtensions(entries[i].Resource.Extension)
+	//
+	//	}
+	//}
 	// fmt.Printf("Districts: %v\n", getDistricts())
-	districts := getDistricts()
-	for i := range districts {
-		fmt.Println(districts[i]["name"])
-	}
+	//districts := getDistricts()
+	//for i := range districts {
+	//	fmt.Println(districts[i]["name"])
+	//}
 	wg.Wait()
 }
 

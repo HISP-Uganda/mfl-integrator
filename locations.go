@@ -1,15 +1,21 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
+	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/buger/jsonparser"
+	_ "github.com/lib/pq"
+	"github.com/samply/golang-fhir-models/fhir-models/fhir"
 	log "github.com/sirupsen/logrus"
 	"net/url"
+	"strings"
+	"time"
 )
 
 func LoadOuLevels() {
@@ -51,7 +57,7 @@ func LoadOuLevels() {
 			ouLevels[i].UID = ouLevels[i].ID
 			log.WithFields(
 				log.Fields{"uid": ouLevels[i].ID, "name": ouLevels[i].Name, "level": ouLevels[i].Level}).Info("Creating New Orgunit Level")
-			ouLevels[i].NewOrgUnitLevel(dbconn)
+			ouLevels[i].NewOrgUnitLevel()
 		}
 
 	}
@@ -97,7 +103,7 @@ func LoadOuGroups() {
 			ouGroups[i].UID = ouGroups[i].ID
 			log.WithFields(
 				log.Fields{"uid": ouGroups[i].ID, "name": ouGroups[i].Name, "level": ouGroups[i].ShortName}).Info("Creating New Orgunit Group")
-			ouGroups[i].NewOrgUnitGroup(dbconn)
+			ouGroups[i].NewOrgUnitGroup()
 		}
 
 	}
@@ -120,7 +126,9 @@ func LoadLocations() {
 
 		apiURL := config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/organisationUnits.json"
 		p := url.Values{}
-		p.Add("fields", "id,name,displayName,code,shortName,openingDate,phoneNumber,path,level,description,geometry")
+		fields := `id,name,displayName,code,shortName,openingDate,phoneNumber,` +
+			`path,level,description,geometry,organisatoinUnitGroups[id,name]`
+		p.Add("fields", fields)
 		p.Add("paging", "false")
 
 		for i := 1; i < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; i++ {
@@ -146,11 +154,294 @@ func LoadLocations() {
 				log.WithFields(
 					log.Fields{"uid": ous[i].ID, "name": ous[i].Name, "level": ous[i].Level,
 						"Geometry-Type": ous[i].Geometry.Type}).Info("Creating New Orgunit")
-				ous[i].NewOrgUnit(dbconn)
+				ous[i].NewOrgUnit()
 			}
 
 			p.Del("level")
 		}
 	}
 
+}
+func MatchLocationsWithMFL() {
+	dbConn := db.GetDB()
+	var levels []models.OrgUnitLevel
+	err := dbConn.Select(&levels,
+		`SELECT id, name, level FROM orgunitlevel WHERE level < $1 AND name <> 'National' ORDER BY level`,
+		config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel)
+	if err != nil {
+		log.WithError(err).Info("Error reading orgunit levels:")
+		return
+	}
+	for _, l := range levels {
+		apiURL := config.MFLIntegratorConf.API.MFLBaseURL
+		params := url.Values{}
+		_type := l.Name
+		if _type == "District" {
+			_type = "Local Government"
+		}
+		if _type == "Sub County/Town Council/Div" {
+			_type = "Sub county/Town Council/Division"
+		}
+		params.Add("resource", "Location")
+		params.Add("type", _type)
+		params.Add("_count", "20000") // set _count too high value and get everything
+
+		apiURL += "?" + params.Encode()
+		log.Info("Locations URL: ", apiURL)
+		resp, err := utils.GetWithBasicAuth(apiURL, config.MFLIntegratorConf.API.MFLUser,
+			config.MFLIntegratorConf.API.MFLPassword)
+		if err != nil {
+			log.WithError(err).Info("Matching Process 001: Failed to fetch locations from MFL")
+		}
+		if resp != nil {
+			v, _, _, _ := jsonparser.Get(resp, "entry")
+			var entries []LocationEntry
+			err := json.Unmarshal(v, &entries)
+			if err != nil {
+				log.WithError(err).Info("Matching Process 002: Error unmarshaling response body")
+				fmt.Println(string(resp))
+				continue
+			}
+			for i := range entries {
+				name := *entries[i].Resource.Name
+				id := *entries[i].Resource.Id
+				parent := ""
+				if entries[i].Resource.PartOf != nil {
+					parent = *entries[i].Resource.PartOf.Reference
+				}
+				var ous []models.OrganisationUnit
+				err = dbConn.Select(&ous,
+					`SELECT id, uid, name, mflparent, parentid FROM organisationunit WHERE name=$1 AND hierarchylevel =$2`,
+					name, l.Level)
+				if err != nil {
+					log.WithError(err).Info("Matching Process 003: Failed to query ous")
+					continue
+				}
+				switch count := len(ous); count {
+				case 0:
+					log.WithFields(log.Fields{"Id": id, "Name": name, "Parent": parent, "Level": l.Level}).Info(
+						"Matching Process: No matching Ou found")
+					// No match
+				case 1:
+					// Exact Match
+					log.WithFields(log.Fields{"Id": id, "Name": name, "Parent": parent, "UID": ous[0].UID}).Info(
+						"Matching Process: Exact Ou match found")
+					ous[0].UpdateMFLID(id)
+					if len(parent) > 0 {
+						// FHIR return parent location of the form "Location/1"
+						ous[0].UpdateMFLParent(strings.ReplaceAll(parent, "Location/", ""))
+					}
+				default:
+					// More than one
+					log.WithFields(log.Fields{"Id": id, "Name": name, "Parent": parent}).Info(
+						"Matching Process: Many matches found")
+					parent = strings.ReplaceAll(parent, "Location/", "")
+					for _, ou := range ous {
+						if ou.ParentID == models.GetOUByMFLParentId(parent) {
+							// This could be our match
+							ou.UpdateMFLParent(parent)
+							log.WithFields(log.Fields{"Id": id, "Name": name, "To": ou.ID, "Parent": parent}).Info("Matched to this one")
+						}
+					}
+
+				}
+			}
+		}
+
+	}
+}
+
+func FetchFacilities() {
+	dbConn := db.GetDB()
+	var id int64
+	err := dbConn.QueryRow("SELECT 1 FROM organisationunit WHERE hierarchylevel = $1 LIMIT 1",
+		config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel).Scan(&id)
+	if err != nil {
+		log.WithError(err).Info("Error getting the count of health facilities")
+	}
+	apiURL := config.MFLIntegratorConf.API.MFLBaseURL
+	params := url.Values{}
+	params.Add("resource", "Location")
+	params.Add("type", "healthFacility")
+	params.Add("_count", "30000")
+	if id == 0 {
+		//None exist so far
+		apiURL += "?" + params.Encode()
+	} else {
+		// Some facilities exist
+		params.Add("_lastUpdated", fmt.Sprintf("gt2023-07-01"))
+		apiURL += "?" + params.Encode()
+	}
+	log.WithField("URL", apiURL).Info("Facility URL")
+	startTime := time.Now().Format("2006-01-02 15:04:05")
+	log.WithField("StartTime", startTime).Info("Starting to fetch facilities")
+	numberCreated := 0
+	numberUpdated := 0
+	// numberDeleted := 0
+
+	resp, err := utils.GetWithBasicAuth(apiURL, config.MFLIntegratorConf.API.MFLUser,
+		config.MFLIntegratorConf.API.MFLPassword)
+	if err != nil {
+		log.WithError(err).Info("Sync S001: Failed to fetch facilities from MFL")
+		return
+	}
+
+	if resp != nil {
+		v, _, _, _ := jsonparser.Get(resp, "entry")
+		var entries []LocationEntry
+		err := json.Unmarshal(v, &entries)
+		if err != nil {
+			log.WithError(err).Info("Sync S002: Error unmarshaling response body")
+			fmt.Println(string(resp))
+			return
+		}
+		// Now we have our facilities
+		for i := range entries {
+			facility := GetOrgUnitFromFHIRLocation(entries[i])
+			facilityJSON, err := json.Marshal(facility)
+			if err != nil {
+				log.WithError(err).Info("Failed to marshal facility to JSON")
+			}
+			log.WithField("FacilityJson", string(facilityJSON)).Info("Facility Object")
+
+			if !facility.ExistsInDB() { // facility doesn't exist in our DB
+				facility.NewOrgUnit()
+
+				facility.UpdateMFLID(facility.MFLID)
+				facility.UpdateMFLParent(facility.MFLParent.String)
+				facility.UpdateMFLUID(facility.MFLUID)
+				facility.UpdateGeometry()
+				// Track the versions
+				var fj dbutils.MapAnything
+				_ = json.Unmarshal(facilityJSON, &fj)
+				facilityRevision := models.OrgUnitRevision{
+					OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
+				}
+				facilityRevision.NewOrgUnitRevision()
+				numberCreated += 1
+			} else {
+				// facility exists
+				var fj dbutils.MapAnything
+				_ = json.Unmarshal(facilityJSON, &fj)
+				newMatchedOld, err := facility.CompareDefinition(fj)
+				if err != nil {
+					log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
+				}
+				if newMatchedOld {
+					// new definition matched the old
+					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID()}).Info(
+						"========= Facility has no changes =======")
+					continue
+				} else {
+					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID()}).Info(
+						"::::::::: Facility had some changes :::::::::")
+
+					numberUpdated += 1
+
+				}
+				//facilityRevision := models.OrgUnitRevision{
+				//	OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
+				//}
+			}
+		}
+	}
+
+	endTime := time.Now().Format("2006-01-02 15:04:05")
+	log.WithField("EndTime", endTime).Info("Stopped processing fetched facilities")
+}
+
+func GetExtensions(extensions []fhir.Extension) map[string]any {
+	resp := make(map[string]any)
+	for i := range extensions {
+		if extensions[i].ValueCode != nil {
+			resp[extensions[i].Url] = *extensions[i].ValueCode
+		}
+		if extensions[i].ValueString != nil {
+			resp[extensions[i].Url] = *extensions[i].ValueString
+
+		}
+		if extensions[i].ValueInteger != nil {
+			resp[extensions[i].Url] = fmt.Sprintf(
+				"%d", *extensions[i].ValueInteger)
+		}
+
+	}
+	return resp
+}
+
+func getPhoneAndEmail(telecom []fhir.ContactPoint) (string, string) {
+	phone, email := "", ""
+	for _, v := range telecom {
+		if v.System.String() == "phone" {
+			if v.Value != nil && *v.Value != "Unknown" {
+				phone = *v.Value
+			}
+		}
+		if v.System.String() == "email" {
+			if v.Value != nil && *v.Value != "Unknown" {
+				email = *v.Value
+			}
+		}
+	}
+	return phone, email
+}
+
+func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit {
+	_url := location.FullURL
+	name := *location.Resource.Name
+	id := *location.Resource.Id
+	parent := ""
+	if location.Resource.PartOf != nil {
+		parent = *location.Resource.PartOf.Reference
+	}
+	parent = strings.ReplaceAll(parent, "Location/", "")
+	extensions := GetExtensions(location.Resource.Extension)
+	address := *location.Resource.Address.Text
+	lat := location.Resource.Position.Latitude
+	long := location.Resource.Position.Longitude
+	coordinates := []json.Number{lat, long}
+	// var point dbutils.JSON
+	coordinateBytes, err := json.Marshal(coordinates)
+	if err != nil {
+		log.WithError(err).Info("Failed to marshal coordinates", coordinates)
+		_, _ = json.Marshal([]json.Number{})
+	}
+
+	phone, email := getPhoneAndEmail(location.Resource.Telecom)
+	tempOpening, _ := time.Parse("2006-01-02", "1970-01-01")
+	levelOfCare := ""
+	if level, ok := extensions["levelOfCare"]; ok {
+		levelOfCare = level.(string)
+	}
+	parentOrgUnit := models.GetOrgUnitByMFLID(parent)
+	facility := models.OrganisationUnit{}
+	historicalId := ""
+	if histId, ok := extensions["historicalIdentifier"]; ok {
+		historicalId = histId.(string)
+	}
+	mflUniqueIdentifier := ""
+	if mflUniqueId, ok := extensions["uniqueIdentifier"]; ok {
+		mflUniqueIdentifier = mflUniqueId.(string)
+	}
+	facility.OpeningDate = tempOpening.Format("2006-01-02")
+	facility.ID = historicalId
+	facility.UID = historicalId
+	facility.Name = name
+	facility.URL = _url
+	facility.MFLID = id
+	facility.MFLUID = mflUniqueIdentifier
+	facility.MFLParent = sql.NullString{String: parent, Valid: true}
+	facility.Level = parentOrgUnit.Level + 1
+	facility.ParentID = parentOrgUnit.ParentID
+	facility.Path = parentOrgUnit.Path + "/" + historicalId
+	facility.Address = address
+	facility.PhoneNumber = phone
+	facility.Email = email
+	facility.Extras = extensions
+	facility.Geometry = models.Geometry{Type: "Point", Coordinates: coordinateBytes}
+	facility.OrgUnitGroups = []models.OrgUnitGroup{
+		{Name: levelOfCare, UID: models.GetOuGroupUIDByName(levelOfCare)},
+	}
+
+	return facility
 }

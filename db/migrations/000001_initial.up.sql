@@ -43,6 +43,7 @@ CREATE TABLE organisationunit(
     attributevalues JSONB NOT NULL DEFAULT '{}'::jsonb,
     mflid TEXT,
     mfluid TEXT,
+    mflparent TEXT,
     openingdate DATE,
     deleted BOOLEAN NOT NULL DEFAULT FALSE,
     geometry geometry(Geometry,4326),
@@ -51,17 +52,56 @@ CREATE TABLE organisationunit(
     updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX organisationunit_name_idx ON organisationunit(name);
 CREATE INDEX organisationunit_level_idx ON organisationunit(hierarchylevel);
 CREATE INDEX organisationunit_path_idx ON organisationunit(path);
 CREATE INDEX organisationunit_parent_idx ON organisationunit(parentid);
+CREATE INDEX organisationunit_created_idx ON organisationunit(created);
+CREATE INDEX organisationunit_updated_idx ON organisationunit(updated);
 
 CREATE TABLE orgunitgroupmembers(
     organisationunitid BIGSERIAL REFERENCES organisationunit(id),
     orgunitgroupid SERIAL REFERENCES orgunitgroup(id),
     created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (organisationunitid, orgunitgroupid)
+
+);
+
+CREATE TABLE orgunitrevision (
+    id BIGSERIAL NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE,
+    organisationunit_id BIGINT REFERENCES organisationunit(id),
+    is_active BOOLEAN NOT NULL,
+    revision BIGINT,
+    definition JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 
 );
+CREATE INDEX orgunitrevision_revision_idx ON orgunitrevision(revision);
+CREATE INDEX orgunitrevision_is_active_idx ON orgunitrevision(is_active);
+CREATE INDEX orgunitrevision_organisationunit_id_idx ON orgunitrevision(organisationunit_id);
+CREATE INDEX orgunitrevision_created_idx ON orgunitrevision(created);
+CREATE INDEX orgunitrevision_updated_idx ON orgunitrevision(updated);
+
+CREATE TABLE orgunitfailure(
+    id BIGSERIAL NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE,
+    facility_uid TEXT NOT NULL,
+    mfluid TEXT NOT NULL,
+    action TEXT,
+    reason TEXT,
+    object JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+
+);
+CREATE INDEX orgunitfailure_uid_idx ON orgunitfailure(uid);
+CREATE INDEX orgunitfailure_facility_uid_idx ON orgunitfailure(facility_uid);
+CREATE INDEX orgunitfailure_mfluid_idx ON orgunitfailure(mfluid);
+CREATE INDEX orgunitfailure_created_idx ON orgunitfailure(created);
+CREATE INDEX orgunitfailure_updated_idx ON orgunitfailure(updated);
 
 CREATE TABLE IF NOT EXISTS user_roles (
       id BIGSERIAL NOT NULL PRIMARY KEY,
@@ -100,6 +140,9 @@ CREATE TABLE IF NOT EXISTS users (
      created timestamptz DEFAULT CURRENT_TIMESTAMP,
      updated timestamptz DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX users_username_idx ON users(username);
+
 CREATE TABLE servers(
     id serial PRIMARY KEY NOT NULL,
     uid TEXT NOT NULL DEFAULT '',
@@ -113,6 +156,7 @@ CREATE TABLE servers(
     cc_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
     http_method text NOT NULL DEFAULT 'POST',
     auth_method text NOT NULL DEFAULT '',
+    url_params JSONB NOT NULL DEFAULT '{}'::jsonb,
     allow_callbacks BOOLEAN NOT NULL DEFAULT 'f', --whether to make callbacks when destination app returns successfully
     allow_copies BOOLEAN NOT NULL DEFAULT 'f', --whether to allow copies to other servers
     use_async BOOLEAN NOT NULL DEFAULT 'f', -- whether to make async calls
@@ -130,6 +174,7 @@ CREATE TABLE servers(
 
 CREATE INDEX servers_name ON servers(name);
 CREATE INDEX servers_uid ON servers(uid);
+CREATE INDEX servers_created_idx ON servers(created);
 
 CREATE TABLE server_allowed_sources(
     id serial PRIMARY KEY NOT NULL,
@@ -145,6 +190,8 @@ CREATE TABLE requests(
      uid VARCHAR(11) NOT NULL DEFAULT '',
      source INTEGER REFERENCES servers(id), -- source app/server
      destination INTEGER REFERENCES servers(id), -- source app/server
+     cc_servers INTEGER[] NOT NULL DEFAULT ARRAY[]::INT[],
+     cc_servers_status JSONB DEFAULT '{}'::JSONB,
      batchid TEXT NOT NULL DEFAULT '',
      body TEXT NOT NULL DEFAULT '',
      response TEXT NOT NULL DEFAULT '',
@@ -184,6 +231,20 @@ CREATE INDEX requests_facility ON requests(facility);
 CREATE INDEX requests_district ON requests(district);
 CREATE INDEX requests_ctype ON requests(ctype);
 CREATE INDEX requests_uid ON requests(uid);
+
+CREATE TABLE sync_log(
+    id BIGSERIAL PRIMARY KEY,
+    uid VARCHAR(11) NOT NULL DEFAULT '',
+    started TIMESTAMPTZ,
+    stopped TIMESTAMPTZ,
+    number_synchronised INTEGER,
+    number_created INTEGER,
+    number_updated INTEGER,
+    number_deleted INTEGER,
+    servers_sync_log JSONB DEFAULT '{}'::jsonb,
+    created TIMESTAMPTZ DEFAULT current_timestamp,
+    updated TIMESTAMPTZ DEFAULT current_timestamp
+);
 
 CREATE TABLE blacklist (
     id bigserial PRIMARY KEY,
@@ -330,6 +391,26 @@ BEGIN
     ELSE
         return body;
     END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- used to check is jsonb objects are identical
+CREATE OR REPLACE FUNCTION jsonb_diff_val(val1 JSONB,val2 JSONB)
+    RETURNS JSONB AS $$
+DECLARE
+    result JSONB;
+    v RECORD;
+BEGIN
+    result = val1;
+    FOR v IN SELECT * FROM jsonb_each(val2) LOOP
+            IF result @> jsonb_build_object(v.key,v.value)
+            THEN result = result - v.key;
+            ELSIF result ? v.key THEN CONTINUE;
+            ELSE
+                result = result || jsonb_build_object(v.key,'null');
+            END IF;
+        END LOOP;
+    RETURN result;
 END;
 $$ LANGUAGE plpgsql;
 

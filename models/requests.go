@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
+	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
+	"github.com/lib/pq"
 	"reflect"
 	"time"
 
@@ -37,6 +39,8 @@ type Request struct {
 		BatchID                string        `db:"batchid" json:"batchId"`
 		Source                 int           `db:"source" json:"source"`
 		Destination            int           `db:"destination" json:"destination"`
+		CCServers              pq.Int32Array `db:"cc_servers" json:"CCServers"`
+		CCServersStatus        dbutils.JSON  `db:"cc_servers_status" json:"CCServersStatus"`
 		ContentType            string        `db:"ctype" json:"contentType"`
 		Body                   string        `db:"body" json:"body"`
 		Response               string        `db:"response" json:"response,omitempty"`

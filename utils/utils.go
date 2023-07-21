@@ -39,6 +39,10 @@ func GetServer(serverName string) int {
 	return i
 }
 
+type DHIS2UID interface {
+	ValidateUID() bool
+}
+
 // GetUID return a Unique ID for our resources
 func GetUID() string {
 	rand.Seed(time.Now().UnixNano())

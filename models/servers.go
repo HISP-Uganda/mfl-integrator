@@ -44,35 +44,35 @@ type ServerID int64
 // Server is our user object
 type Server struct {
 	s struct {
-		ID                      ServerID               `db:"id" json:"-"`
-		UID                     string                 `db:"uid" json:"uid"`
-		Name                    string                 `db:"name" json:"name"`
-		Username                string                 `db:"username" json:"username"`
-		Password                string                 `db:"password" json:"password"`
-		IsProxyServer           bool                   `db:"is_proxy_server" json:"is_proxy_server"` // whether response is received as is
-		SystemType              string                 `db:"system_type" json:"system_type"`         // the type of system e.g DHIS2, Other is the default
-		EndPointType            string                 `db:"endpoint_type" json:"endpoint_type"`     // e.g /dataValueSets,
-		AuthToken               string                 `db:"auth_token" json:"auth_token"`
-		IPAddress               string                 `db:"ipaddress" json:"ipaddress"` // Usefull for setting Trusted Proxies
-		URL                     string                 `db:"url" json:"url"`
-		CCURLS                  pq.StringArray         `db:"cc_urls" json:"cc_urls"`                // just an additional URL to receive same request
-		CallbackURL             string                 `db:"callback_url" json:"callback_url"`      // receives response on success call to url
-		HTTPMethod              string                 `db:"http_method" json:"http_method"`        // the HTTP Method used when calling the url
-		AuthMethod              string                 `db:"auth_method" json:"auth_method"`        // the Authentication Method used
-		AllowCallbacks          bool                   `db:"allow_callbacks" json:"allowCallbacks"` // Whether to allow calling sending callbacks
-		AllowCopies             bool                   `db:"allow_copies" json:"allowCopies"`       // Whether to allow copying similar request to CCURLs
-		UseAsync                bool                   `db:"use_async" json:"use_async"`
-		UseSSL                  bool                   `db:"use_ssl" json:"use_ssl"`
-		ParseResponses          bool                   `db:"parse_responses" json:"parseResponses"`
-		SSLClientCertKeyFile    string                 `db:"ssl_client_certkey_file" json:"sslClientCertkeyFile"`
-		StartOfSubmissionPeriod string                 `db:"start_submission_period" json:"startSubmissionPeriod"`
-		EndOfSubmissionPeriod   string                 `db:"end_submission_period" json:"endSubmissionPeriod"`
-		XMLResponseXPATH        string                 `db:"xml_response_xpath"  json:"xml_response_xpath"`
-		JSONResponseXPATH       string                 `db:"json_response_xpath" json:"json_response_xpath"`
-		Suspended               bool                   `db:"suspended" json:"suspended"`
-		URLParams               map[string]interface{} `db:"url_params" json:"URLParams"`
-		Created                 time.Time              `db:"created" json:"created"`
-		Updated                 time.Time              `db:"updated" json:"updated"`
+		ID                      ServerID       `db:"id" json:"-"`
+		UID                     string         `db:"uid" json:"uid"`
+		Name                    string         `db:"name" json:"name"`
+		Username                string         `db:"username" json:"username"`
+		Password                string         `db:"password" json:"password"`
+		IsProxyServer           bool           `db:"is_proxy_server" json:"is_proxy_server"` // whether response is received as is
+		SystemType              string         `db:"system_type" json:"system_type"`         // the type of system e.g DHIS2, Other is the default
+		EndPointType            string         `db:"endpoint_type" json:"endpoint_type"`     // e.g /dataValueSets,
+		AuthToken               string         `db:"auth_token" json:"auth_token"`
+		IPAddress               string         `db:"ipaddress" json:"ipaddress"` // Usefull for setting Trusted Proxies
+		URL                     string         `db:"url" json:"url"`
+		CCURLS                  pq.StringArray `db:"cc_urls" json:"cc_urls"`                // just an additional URL to receive same request
+		CallbackURL             string         `db:"callback_url" json:"callback_url"`      // receives response on success call to url
+		HTTPMethod              string         `db:"http_method" json:"http_method"`        // the HTTP Method used when calling the url
+		AuthMethod              string         `db:"auth_method" json:"auth_method"`        // the Authentication Method used
+		AllowCallbacks          bool           `db:"allow_callbacks" json:"allowCallbacks"` // Whether to allow calling sending callbacks
+		AllowCopies             bool           `db:"allow_copies" json:"allowCopies"`       // Whether to allow copying similar request to CCURLs
+		UseAsync                bool           `db:"use_async" json:"use_async"`
+		UseSSL                  bool           `db:"use_ssl" json:"use_ssl"`
+		ParseResponses          bool           `db:"parse_responses" json:"parseResponses"`
+		SSLClientCertKeyFile    string         `db:"ssl_client_certkey_file" json:"sslClientCertkeyFile"`
+		StartOfSubmissionPeriod string         `db:"start_submission_period" json:"startSubmissionPeriod"`
+		EndOfSubmissionPeriod   string         `db:"end_submission_period" json:"endSubmissionPeriod"`
+		XMLResponseXPATH        string         `db:"xml_response_xpath"  json:"xml_response_xpath"`
+		JSONResponseXPATH       string         `db:"json_response_xpath" json:"json_response_xpath"`
+		Suspended               bool           `db:"suspended" json:"suspended"`
+		URLParams               dbutils.JSON   `db:"url_params" json:"URLParams"`
+		Created                 time.Time      `db:"created" json:"created"`
+		Updated                 time.Time      `db:"updated" json:"updated"`
 	}
 }
 

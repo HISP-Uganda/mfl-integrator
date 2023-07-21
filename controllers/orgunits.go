@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/gin-gonic/gin"
-	"github.com/jmoiron/sqlx"
 	// log "github.com/sirupsen/logrus"
 	// "net/http"
 )
@@ -14,12 +13,11 @@ type OrgUnitController struct{}
 
 // OrgUnit method handles the /organisationUnit request
 func (o *OrgUnitController) OrgUnit(c *gin.Context) {
-
-	db := c.MustGet("dbConn").(*sqlx.DB)
+	// db := c.MustGet("dbConn").(*sqlx.DB)
 	var ou models.OrganisationUnit
 	if c.ShouldBind(&ou) == nil {
 		fmt.Printf("%v\n", ou)
-		ou.NewOrgUnit(db)
+		ou.NewOrgUnit()
 		//_, err := db.NamedExec(insertOrgUnitSQL, ou)
 		//if err != nil {
 		//	fmt.Printf("ERROR INSERTING OrgUnit", err)
