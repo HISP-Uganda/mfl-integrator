@@ -1,16 +1,20 @@
 package models
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/HISP-Uganda/mfl-integrator/db"
+	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
-	"github.com/gcinnovate/integrator/utils"
+	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 	"reflect"
+	"regexp"
 	"strconv"
 	"time"
 
-	"github.com/gcinnovate/integrator/db"
 	"github.com/lib/pq"
 )
 
@@ -23,16 +27,16 @@ func init() {
 	ServerMap = make(map[string]Server)
 	for rows.Next() {
 		srv := &Server{}
-		s := &srv.s
-		err := rows.StructScan(&s)
+
+		err := rows.StructScan(&srv.s)
 		if err != nil {
 			log.Fatalln("Server Loading ==>", err)
 		}
 		// fmt.Printf("=>>>>>>%#v", s)
-		ServerMap[strconv.Itoa(int(s.ID))] = *srv
+		ServerMap[strconv.Itoa(int(srv.s.ID))] = *srv
 
 	}
-	rows.Close()
+	_ = rows.Close()
 }
 
 // ServerMap is the List of Servers
@@ -45,34 +49,34 @@ type ServerID int64
 type Server struct {
 	s struct {
 		ID                      ServerID       `db:"id" json:"-"`
-		UID                     string         `db:"uid" json:"uid"`
-		Name                    string         `db:"name" json:"name"`
+		UID                     string         `db:"uid" json:"uid,omitempty"`
+		Name                    string         `db:"name" json:"name" validate:"required"`
 		Username                string         `db:"username" json:"username"`
-		Password                string         `db:"password" json:"password"`
-		IsProxyServer           bool           `db:"is_proxy_server" json:"is_proxy_server"` // whether response is received as is
-		SystemType              string         `db:"system_type" json:"system_type"`         // the type of system e.g DHIS2, Other is the default
-		EndPointType            string         `db:"endpoint_type" json:"endpoint_type"`     // e.g /dataValueSets,
-		AuthToken               string         `db:"auth_token" json:"auth_token"`
-		IPAddress               string         `db:"ipaddress" json:"ipaddress"` // Usefull for setting Trusted Proxies
-		URL                     string         `db:"url" json:"url"`
-		CCURLS                  pq.StringArray `db:"cc_urls" json:"cc_urls"`                // just an additional URL to receive same request
-		CallbackURL             string         `db:"callback_url" json:"callback_url"`      // receives response on success call to url
-		HTTPMethod              string         `db:"http_method" json:"http_method"`        // the HTTP Method used when calling the url
-		AuthMethod              string         `db:"auth_method" json:"auth_method"`        // the Authentication Method used
-		AllowCallbacks          bool           `db:"allow_callbacks" json:"allowCallbacks"` // Whether to allow calling sending callbacks
-		AllowCopies             bool           `db:"allow_copies" json:"allowCopies"`       // Whether to allow copying similar request to CCURLs
-		UseAsync                bool           `db:"use_async" json:"use_async"`
-		UseSSL                  bool           `db:"use_ssl" json:"use_ssl"`
-		ParseResponses          bool           `db:"parse_responses" json:"parseResponses"`
+		Password                string         `db:"password" json:"password,omitempty"`
+		IsProxyServer           bool           `db:"is_proxy_server" json:"isProxyServer,omitempty"` // whether response is received as is
+		SystemType              string         `db:"system_type" json:"systemType,omitempty"`        // the type of system e.g DHIS2, Other is the default
+		EndPointType            string         `db:"endpoint_type" json:"endPointType,omitempty"`    // e.g /dataValueSets,
+		AuthToken               string         `db:"auth_token" json:"AuthToken"`
+		IPAddress               string         `db:"ipaddress" json:"IPAddress"` // Usefull for setting Trusted Proxies
+		URL                     string         `db:"url" json:"URL" validate:"required,url"`
+		CCURLS                  pq.StringArray `db:"cc_urls" json:"CCURLS,omitempty"`                   // just an additional URL to receive same request
+		CallbackURL             string         `db:"callback_url" json:"callbackURL,omitempty"`         // receives response on success call to url
+		HTTPMethod              string         `db:"http_method" json:"HTTPMethod" validate:"required"` // the HTTP Method used when calling the url
+		AuthMethod              string         `db:"auth_method" json:"AuthMethod" validate:"required"` // the Authentication Method used
+		AllowCallbacks          bool           `db:"allow_callbacks" json:"allowCallbacks,omitempty"`   // Whether to allow calling sending callbacks
+		AllowCopies             bool           `db:"allow_copies" json:"allowCopies,omitempty"`         // Whether to allow copying similar request to CCURLs
+		UseAsync                bool           `db:"use_async" json:"useAsync,omitempty"`
+		UseSSL                  bool           `db:"use_ssl" json:"useSSL,omitempty"`
+		ParseResponses          bool           `db:"parse_responses" json:"parseResponses,omitempty"`
 		SSLClientCertKeyFile    string         `db:"ssl_client_certkey_file" json:"sslClientCertkeyFile"`
-		StartOfSubmissionPeriod string         `db:"start_submission_period" json:"startSubmissionPeriod"`
-		EndOfSubmissionPeriod   string         `db:"end_submission_period" json:"endSubmissionPeriod"`
-		XMLResponseXPATH        string         `db:"xml_response_xpath"  json:"xml_response_xpath"`
-		JSONResponseXPATH       string         `db:"json_response_xpath" json:"json_response_xpath"`
-		Suspended               bool           `db:"suspended" json:"suspended"`
-		URLParams               dbutils.JSON   `db:"url_params" json:"URLParams"`
-		Created                 time.Time      `db:"created" json:"created"`
-		Updated                 time.Time      `db:"updated" json:"updated"`
+		StartOfSubmissionPeriod int            `db:"start_submission_period" json:"startSubmissionPeriod"`
+		EndOfSubmissionPeriod   int            `db:"end_submission_period" json:"endSubmissionPeriod"`
+		XMLResponseXPATH        string         `db:"xml_response_xpath"  json:"XMLResponseXPATH"`
+		JSONResponseXPATH       string         `db:"json_response_xpath" json:"JSONResponseXPATH"`
+		Suspended               bool           `db:"suspended" json:"suspended,omitempty"`
+		URLParams               dbutils.JSON   `db:"url_params" json:"URLParams,omitempty"`
+		Created                 time.Time      `db:"created" json:"created,omitempty"`
+		Updated                 time.Time      `db:"updated" json:"updated,omitempty"`
 	}
 }
 
@@ -126,10 +130,10 @@ func (s *Server) CallbackURL() string { return s.s.CallbackURL }
 func (s *Server) ParseResponses() bool { return s.s.ParseResponses }
 
 // EndOfSubmissionPeriod returns the end of the submission period for the server
-func (s *Server) EndOfSubmissionPeriod() string { return s.s.EndOfSubmissionPeriod }
+func (s *Server) EndOfSubmissionPeriod() int { return s.s.EndOfSubmissionPeriod }
 
 // StartOfSubmissionPeriod returns the start of the submission period for the server
-func (s *Server) StartOfSubmissionPeriod() string { return s.s.StartOfSubmissionPeriod }
+func (s *Server) StartOfSubmissionPeriod() int { return s.s.StartOfSubmissionPeriod }
 
 // Suspended returns whether the server is suspended
 func (s *Server) Suspended() bool { return s.s.Suspended }
@@ -153,9 +157,53 @@ func GetServerByID(id int64) Server {
 
 }
 
+// Self
+func (s *Server) Self() map[string]any {
+	srvJSON, err := json.Marshal(s.s)
+	if err != nil {
+		log.WithError(err).Error("Could not marshal server struct to JSON")
+	}
+	var srv map[string]any
+	_ = json.Unmarshal(srvJSON, &srv)
+	return srv
+}
+
+func (s *Server) ExistsInDB() bool {
+	var count int
+	err := db.GetDB().Get(&count, "SELECT count(*)  FROM servers WHERE name = $1", s.s.Name)
+	if err != nil {
+		log.WithError(err).Info("Error checking server existence:")
+		return false
+	}
+	return count > 0
+}
+
+// GetServerIDByName returns server object using id
+func GetServerIDByName(name string) int64 {
+	var id int64
+	err := db.GetDB().Get(&id, "SELECT id FROM servers WHERE name = $1", name)
+
+	if err != nil {
+		fmt.Printf("Error geting server: [%v]", err)
+		return 0
+	}
+	return id
+
+}
+
+func (s *Server) InSubmissionPeriod(tx *sqlx.Tx) bool {
+	inSubmissionPeriod := false
+	err := tx.Get(&inSubmissionPeriod, `SELECT in_submission_period($1)`, s.s.ID)
+	if err != nil {
+		log.WithError(err).Info("Failed to get server submission period status!")
+		return false
+	}
+	return inSubmissionPeriod
+}
+
 // ServerDBFields returns the fields in the servers table
 func (s *Server) ServerDBFields() []string {
-	e := reflect.ValueOf(&s.s).Elem()
+	e := reflect.ValueOf(s).Elem()
 	var ret []string
 	for i := 0; i < e.NumField(); i++ {
 		t := e.Type().Field(i).Tag.Get("db")
@@ -165,6 +213,16 @@ func (s *Server) ServerDBFields() []string {
 	}
 	ret = append(ret, "*")
 	return ret
+}
+
+func (s *Server) ValidateUID() bool {
+	uidPattern := `^[a-zA-Z0-9]{11}$`
+	re := regexp.MustCompile(uidPattern)
+	return re.MatchString(s.s.UID)
+}
+
+func (s *Server) SetUID(uid string) {
+	s.s.UID = uid
 }
 
 var serversFields = new(Server).ServerDBFields()
@@ -211,4 +269,46 @@ func GetServers(db *sqlx.DB, page string, pageSize string,
 		log.WithError(err).Error("Failed to get query results")
 	}
 	return results
+}
+
+const insertServerSQL = `
+INSERT INTO servers(uid, name, username, password, url, ipaddress, auth_method, auth_token,
+       callback_url, allow_callbacks, cc_urls, allow_copies, start_submission_period, end_submission_period,
+       parse_responses, use_ssl, suspended, ssl_client_certkey_file, json_response_xpath, xml_response_xpath, endpoint_type)
+       VALUES (:uid,:name,:username,:password,:url,:ipaddress,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
+               :cc_urls,:allow_copies,:start_submission_period,:end_submission_period,:parse_responses,:use_ssl,
+               :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type)
+`
+
+// NewServer creates new server and saves it in DB
+func NewServer(c *gin.Context, db *sqlx.DB) (Server, error) {
+	srv := &Server{}
+
+	contentType := c.Request.Header.Get("Content-Type")
+	switch contentType {
+	case "application/json":
+		if err := c.BindJSON(&srv.s); err != nil {
+			log.WithError(err).Error("Error reading server object from POST body")
+		}
+		// log.WithField("New Server", s).Info("Going to create new server")
+	default:
+		//
+		log.WithField("Content-Type", contentType).Error("Unsupported content-Type")
+		return *srv, errors.New(fmt.Sprintf("Unsupported Content-Type: %s", contentType))
+	}
+	if !srv.ValidateUID() {
+		srv.SetUID(utils.GetUID())
+	}
+	if srv.ExistsInDB() {
+		log.WithField("Server Name", srv.s.Name).Info("Server with same name already exists!")
+		return *srv, errors.New(fmt.Sprintf("Server with name %s already exists!", srv.s.Name))
+	} else {
+		_, err := db.NamedExec(insertServerSQL, srv.s)
+		if err != nil {
+			log.WithError(err).Error("Failed to save server to database")
+			return Server{}, err
+		}
+	}
+
+	return *srv, nil
 }

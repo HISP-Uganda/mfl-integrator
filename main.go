@@ -42,13 +42,15 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	go func() {
+		LoadOuLevels()
+		LoadOuGroups()
+		LoadLocations() // Load organisation units - before facility in base DHIS2 instance
+		MatchLocationsWithMFL()
+		// fetch facilities after initial run, just use a scheduled job.
+		FetchFacilities()
 
-	LoadOuLevels()
-	LoadOuGroups()
-	LoadLocations() // Load organisation units - before facility in base DHIS2 instance
-	MatchLocationsWithMFL()
-
-	FetchFacilities()
+	}()
 
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -65,41 +67,6 @@ func main() {
 	wg.Add(1)
 	go startAPIServer(&wg)
 
-	//fmt.Println("MFL Integrator v1")
-	//baseURL := config.MFLIntegratorConf.API.MFLBaseURL
-	//parameters := url.Values{}
-	//parameters.Add("resource", "Location")
-	//parameters.Add("type", "healthFacility")
-	//parameters.Add("_count", "1")
-	//parameters.Add("facilityLevelOfCare", "HC IV")
-	//baseURL += "?" + parameters.Encode()
-	//
-	//body, _ := utils.GetRequest(baseURL)
-	//
-	//if body != nil {
-	//	v, _, _, _ := jsonparser.Get(body, "entry")
-	//	fmt.Printf("Entries: %s", v)
-	//	var entries []LocationEntry
-	//	err := json.Unmarshal(v, &entries)
-	//	if err != nil {
-	//		fmt.Println("Error unmarshaling response body:", err)
-	//		return
-	//	}
-	//
-	//	// fmt.Printf("Our Bundle: %v\n", *bundle.Meta.LastUpdated)
-	//	fmt.Printf("Records Found: %v\n", len(entries))
-	//	// :w
-	//	extensions := make(map[string]any)
-	//	for i := range entries {
-	//		extensions = GetExtensions(entries[i].Resource.Extension)
-	//
-	//	}
-	//}
-	// fmt.Printf("Districts: %v\n", getDistricts())
-	//districts := getDistricts()
-	//for i := range districts {
-	//	fmt.Println(districts[i]["name"])
-	//}
 	wg.Wait()
 }
 
@@ -156,6 +123,9 @@ func startAPIServer(wg *sync.WaitGroup) {
 		ou := new(controllers.OrgUnitController)
 		v2.POST("/organisationUnit", ou.OrgUnit)
 
+		s := new(controllers.ServerController)
+		v2.POST("/servers", s.CreateServer)
+
 	}
 	// Handle error response when a route is not defined
 	router.NoRoute(func(c *gin.Context) {
@@ -163,4 +133,8 @@ func startAPIServer(wg *sync.WaitGroup) {
 	})
 
 	_ = router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
+}
+
+func LoadAndMatch() {
+
 }

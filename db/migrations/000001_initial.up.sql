@@ -153,9 +153,11 @@ CREATE TABLE servers(
     ipaddress text NOT NULL DEFAULT '',
     url text NOT NULL DEFAULT '', -- endpoint
     callback_url text NOT NULL DEFAULT '', -- url to call with response from endpoint
-    cc_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    cc_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
     http_method text NOT NULL DEFAULT 'POST',
     auth_method text NOT NULL DEFAULT '',
+    system_type TEXT NOT NULL DEFAULT '',
+    endpoint_type TEXT NOT NULL DEFAULT '',
     url_params JSONB NOT NULL DEFAULT '{}'::jsonb,
     allow_callbacks BOOLEAN NOT NULL DEFAULT 'f', --whether to make callbacks when destination app returns successfully
     allow_copies BOOLEAN NOT NULL DEFAULT 'f', --whether to allow copies to other servers

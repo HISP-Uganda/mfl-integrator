@@ -18,10 +18,10 @@ import (
 	"time"
 )
 
+// LoadOuLevels populates organisation unit levels in our DB from base DHIS2
 func LoadOuLevels() {
-	dbconn := db.GetDB()
 	var id int
-	err := dbconn.QueryRowx("SELECT count(*) FROM orgunitlevel").Scan(&id)
+	err := db.GetDB().Get(&id, "SELECT count(*) FROM orgunitlevel")
 	if err != nil {
 		log.WithError(err).Info("Error reading organisation unit levels:")
 		return
@@ -43,6 +43,7 @@ func LoadOuLevels() {
 			config.MFLIntegratorConf.API.MFLDHIS2Password)
 		if err != nil {
 			log.WithError(err).Info("Failed to fetch organisation unit levels")
+			return
 		}
 		// fmt.Println(string(resp))
 		v, _, _, _ := jsonparser.Get(resp, "organisationUnitLevels")
@@ -59,15 +60,13 @@ func LoadOuLevels() {
 				log.Fields{"uid": ouLevels[i].ID, "name": ouLevels[i].Name, "level": ouLevels[i].Level}).Info("Creating New Orgunit Level")
 			ouLevels[i].NewOrgUnitLevel()
 		}
-
 	}
-
 }
 
+// LoadOuGroups populates organisation unit groups in our DB from base DHIS2
 func LoadOuGroups() {
-	dbconn := db.GetDB()
 	var id int
-	err := dbconn.QueryRowx("SELECT count(*) FROM orgunitgroup").Scan(&id)
+	err := db.GetDB().Get(&id, "SELECT count(*) FROM orgunitgroup")
 	if err != nil {
 		log.WithError(err).Info("Error reading organisation unit groups:")
 		return
@@ -89,10 +88,9 @@ func LoadOuGroups() {
 			config.MFLIntegratorConf.API.MFLDHIS2Password)
 		if err != nil {
 			log.WithError(err).Info("Failed to fetch organisation unit groups")
+			return
 		}
-		// fmt.Println(string(resp))
 		v, _, _, _ := jsonparser.Get(resp, "organisationUnitGroups")
-		// fmt.Printf("Entries: %s", v)
 		var ouGroups []models.OrgUnitGroup
 		err = json.Unmarshal(v, &ouGroups)
 		if err != nil {
@@ -105,15 +103,13 @@ func LoadOuGroups() {
 				log.Fields{"uid": ouGroups[i].ID, "name": ouGroups[i].Name, "level": ouGroups[i].ShortName}).Info("Creating New Orgunit Group")
 			ouGroups[i].NewOrgUnitGroup()
 		}
-
 	}
-
 }
 
+// LoadLocations populates organisation units in our DB from base DHIS2
 func LoadLocations() {
-	dbconn := db.GetDB()
 	var id int
-	err := dbconn.QueryRowx("SELECT count(*) FROM organisationunit WHERE hierarchylevel=1").Scan(&id)
+	err := db.GetDB().Get(&id, "SELECT count(*) FROM organisationunit WHERE hierarchylevel=1")
 	if err != nil {
 		log.WithError(err).Info("Error reading organisation units:")
 		return
@@ -139,14 +135,14 @@ func LoadLocations() {
 				config.MFLIntegratorConf.API.MFLDHIS2Password)
 			if err != nil {
 				log.WithError(err).Info("Failed to fetch organisation units")
+				return
 			}
-			// fmt.Println(string(resp))
+
 			v, _, _, _ := jsonparser.Get(resp, "organisationUnits")
-			// fmt.Printf("Entries: %s", v)
 			var ous []models.OrganisationUnit
 			err = json.Unmarshal(v, &ous)
 			if err != nil {
-				fmt.Println("Error unmarshaling response body:", err)
+				log.WithError(err).Error("Error unmarshalling response body:")
 				return
 			}
 			for i := range ous {
@@ -160,8 +156,9 @@ func LoadLocations() {
 			p.Del("level")
 		}
 	}
-
 }
+
+// MatchLocationsWithMFL tries to create a match for our facilities based on DHIS2 uid, name and level
 func MatchLocationsWithMFL() {
 	dbConn := db.GetDB()
 	var levels []models.OrgUnitLevel
@@ -251,20 +248,33 @@ func MatchLocationsWithMFL() {
 	}
 }
 
+// FetchFacilities pulls facilities from the MFL after loading and matching
 func FetchFacilities() {
 	dbConn := db.GetDB()
-	var id int64
-	err := dbConn.QueryRow("SELECT 1 FROM organisationunit WHERE hierarchylevel = $1 LIMIT 1",
-		config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel).Scan(&id)
+	var upperLevels int64
+	err := dbConn.Get(&upperLevels, "SELECT count(*) FROM organisationunit WHERE hierarchylevel = $1 - 1",
+		config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel)
+	if err != nil {
+		log.WithError(err).Info("Error reading records on level above facility")
+		return
+	}
+	if upperLevels == 0 {
+		log.Warn("Cannot Synchronize Facilities when hierarchy levels above facility are missing")
+		return
+	}
+	var facilityCount int64
+	err = dbConn.Get(&facilityCount, "SELECT count(*) FROM organisationunit WHERE hierarchylevel = $1 LIMIT 1",
+		config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel)
 	if err != nil {
 		log.WithError(err).Info("Error getting the count of health facilities")
+		return
 	}
 	apiURL := config.MFLIntegratorConf.API.MFLBaseURL
 	params := url.Values{}
 	params.Add("resource", "Location")
 	params.Add("type", "healthFacility")
 	params.Add("_count", "30000")
-	if id == 0 {
+	if facilityCount == 0 {
 		//None exist so far
 		apiURL += "?" + params.Encode()
 	} else {
@@ -323,7 +333,7 @@ func FetchFacilities() {
 				// facility exists
 				var fj dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
-				newMatchedOld, err := facility.CompareDefinition(fj)
+				newMatchedOld, diffMap, err := facility.CompareDefinition(fj)
 				if err != nil {
 					log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
 				}
@@ -333,8 +343,12 @@ func FetchFacilities() {
 						"========= Facility has no changes =======")
 					continue
 				} else {
-					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID()}).Info(
+					metadataPayload := models.GenerateMetadataPayload(fj, diffMap)
+					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID(),
+						"Diff": diffMap, "MetadataPalyload": metadataPayload}).Info(
 						"::::::::: Facility had some changes :::::::::")
+
+					// Generate Metadata Update object
 
 					numberUpdated += 1
 
@@ -350,6 +364,7 @@ func FetchFacilities() {
 	log.WithField("EndTime", endTime).Info("Stopped processing fetched facilities")
 }
 
+// GetExtensions gets extensions within an entry in a FHIR bundle
 func GetExtensions(extensions []fhir.Extension) map[string]any {
 	resp := make(map[string]any)
 	for i := range extensions {
@@ -369,6 +384,7 @@ func GetExtensions(extensions []fhir.Extension) map[string]any {
 	return resp
 }
 
+// getPhoneAndEmail retrieves phone and email from ContactPoint of a FHIR Location
 func getPhoneAndEmail(telecom []fhir.ContactPoint) (string, string) {
 	phone, email := "", ""
 	for _, v := range telecom {
@@ -386,6 +402,7 @@ func getPhoneAndEmail(telecom []fhir.ContactPoint) (string, string) {
 	return phone, email
 }
 
+// GetOrgUnitFromFHIRLocation is used to generate DHIS2 OrganisationUnit from FHIR Location
 func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit {
 	_url := location.FullURL
 	name := *location.Resource.Name

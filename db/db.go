@@ -1,6 +1,7 @@
 package db
 
 import (
+	"github.com/HISP-Uganda/mfl-integrator/config"
 	"log"
 
 	"github.com/jmoiron/sqlx"
@@ -10,7 +11,7 @@ import (
 var db *sqlx.DB
 
 func init() {
-	psqlInfo := "postgresql://postgres:postgres@localhost:5432/mfldb?sslmode=disable"
+	psqlInfo := config.MFLIntegratorConf.Database.URI
 	//
 	var err error
 	db, err = ConnectDB(psqlInfo)

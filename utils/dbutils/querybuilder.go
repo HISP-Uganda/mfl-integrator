@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gcinnovate/integrator/utils"
+	"github.com/HISP-Uganda/mfl-integrator/utils"
 )
 
 // Table is a representation of a table in a query

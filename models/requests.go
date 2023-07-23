@@ -3,10 +3,14 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/lib/pq"
+	"github.com/samber/lo"
+	log "github.com/sirupsen/logrus"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,38 +40,38 @@ type Request struct {
 	r struct {
 		ID                     RequestID     `db:"id" json:"-"`
 		UID                    string        `db:"uid" json:"uid"`
-		BatchID                string        `db:"batchid" json:"batchId"`
-		Source                 int           `db:"source" json:"source"`
-		Destination            int           `db:"destination" json:"destination"`
-		CCServers              pq.Int32Array `db:"cc_servers" json:"CCServers"`
-		CCServersStatus        dbutils.JSON  `db:"cc_servers_status" json:"CCServersStatus"`
-		ContentType            string        `db:"ctype" json:"contentType"`
-		Body                   string        `db:"body" json:"body"`
+		BatchID                string        `db:"batchid" json:"batchId,omitempty"`
+		Source                 int           `db:"source" json:"source" validate:"required"`
+		Destination            int           `db:"destination" json:"destination" validate:"required"`
+		CCServers              pq.Int64Array `db:"cc_servers" json:"CCServers,omitempty"`
+		CCServersStatus        dbutils.JSON  `db:"cc_servers_status" json:"CCServersStatus,omitempty"`
+		ContentType            string        `db:"ctype" json:"contentType,omitempty" validate:"required"`
+		Body                   string        `db:"body" json:"body" validate:"required"`
 		Response               string        `db:"response" json:"response,omitempty"`
-		Status                 RequestStatus `db:"status" json:"status"`
-		StatusCode             string        `db:"statuscode" json:"statusCode"`
-		Retries                int           `db:"retries" json:"retries"`
-		Errors                 string        `db:"errors" json:"errors"`
-		InSubmissoinPeriodbool bool          `db:"in_submission_period" json:"inSubmissoinPeriod"`
-		FrequencyType          string        `db:"frequency_type" json:"frequencyType"`
-		Period                 string        `db:"period" json:"period"`
-		Day                    string        `db:"day" json:"day"`
-		Week                   string        `db:"week" json:"week"`
-		Month                  string        `db:"month" json:"month"`
-		Year                   string        `db:"year" json:"year"`
-		MSISDN                 string        `db:"msisdn" json:"msisdn"`
-		RawMsg                 string        `db:"raw_msg" json:"rawMsg"`
-		Facility               string        `db:"facility" json:"facility"`
-		District               string        `db:"district" json:"district"`
-		ReportType             string        `db:"report_type" json:"reportType"` // type of object eg event, enrollment, datavalues
-		ObjectType             string        `db:"object_type" json:"objectType"` // type of report as in source system
-		Extras                 string        `db:"extras" json:"extras"`
-		Suspended              bool          `db:"suspended" json:"suspended"`                   // whether request is suspended
-		BodyIsQueryParams      bool          `db:"body_is_query_param" json:"bodyIsQueryParams"` // whether body is to be used a query parameters
-		SubmissionID           string        `db:"submissionid" json:"submissionId"`             // a reference ID is source system
-		URLSuffix              string        `db:"url_suffix" json:"urlSuffix"`
-		Created                time.Time     `db:"created" json:"created"`
-		Updated                time.Time     `db:"updated" json:"updated"`
+		Status                 RequestStatus `db:"status" json:"status,omitempty"`
+		StatusCode             string        `db:"statuscode" json:"statusCode,omitempty"`
+		Retries                int           `db:"retries" json:"retries,omitempty"`
+		Errors                 string        `db:"errors" json:"errors,omitempty"`
+		InSubmissoinPeriodbool bool          `db:"in_submission_period" json:"-"`
+		FrequencyType          string        `db:"frequency_type" json:"frequencyType,omitempty"`
+		Period                 string        `db:"period" json:"period,omitempty"`
+		Day                    string        `db:"day" json:"day,omitempty"`
+		Week                   string        `db:"week" json:"week,omitempty"`
+		Month                  string        `db:"month" json:"month,omitempty"`
+		Year                   string        `db:"year" json:"year,omitempty"`
+		MSISDN                 string        `db:"msisdn" json:"msisdn,omitempty"`
+		RawMsg                 string        `db:"raw_msg" json:"rawMsg,omitempty"`
+		Facility               string        `db:"facility" json:"facility,omitempty"`
+		District               string        `db:"district" json:"district,omitempty"`
+		ReportType             string        `db:"report_type" json:"reportType,omitempty" validate:"required"` // type of object eg event, enrollment, datavalues
+		ObjectType             string        `db:"object_type" json:"objectType,omitempty"`                     // type of report as in source system
+		Extras                 string        `db:"extras" json:"extras,omitempty"`
+		Suspended              bool          `db:"suspended" json:"suspended,omitempty"`                   // whether request is suspended
+		BodyIsQueryParams      bool          `db:"body_is_query_param" json:"bodyIsQueryParams,omitempty"` // whether body is to be used a query parameters
+		SubmissionID           string        `db:"submissionid" json:"submissionId,omitempty"`             // a reference ID is source system
+		URLSuffix              string        `db:"url_suffix" json:"urlSuffix,omitempty"`
+		Created                time.Time     `db:"created" json:"created,omitempty"`
+		Updated                time.Time     `db:"updated" json:"updated,omitempty"`
 		// OrgID              OrgID         `db:"org_id" json:"org_id"` // Lets add these later
 	}
 }
@@ -146,14 +150,23 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 	r.ObjectType = c.Query("objectType")
 	r.Errors = c.Query("extras")
 	r.District = c.Query("district")
+	ccList := c.DefaultQuery("cc", config.MFLIntegratorConf.API.MFLCCDHIS2Servers)
+	serverIDs := lo.Map(strings.Split(ccList, ","), func(item string, _ int) int64 { // lodash stuff
+		return GetServerIDByName(item)
+	})
+	validServerIDs := lo.Filter(serverIDs, func(item int64, _ int) bool {
+		return item > 0
+	})
+	r.CCServers = validServerIDs
 
 	r.Status = RequestStatusReady
 
 	switch r.ContentType {
-	case "application/json":
+	case "application/json", "application/json-patch+json", "application/geo+json":
 		var body map[string]interface{} // validate based on dest system endpoint
 		if err := c.BindJSON(&body); err != nil {
 			fmt.Printf("Error reading json body %v", err)
+			log.WithError(err).Error("Error reading request body from POST body")
 		}
 		b, _ := json.Marshal(body)
 		fmt.Println(string(b))
@@ -162,20 +175,20 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 		// var xmlBody interface{}
 		xmlBody, err := c.GetRawData()
 		if err != nil {
-			fmt.Printf("Error reading xml body %v", err)
+			log.WithError(err).Error("Error reading request XML body from POST body")
 		}
 		r.Body = string(xmlBody)
 	default:
 		body, err := c.GetRawData()
 		if err != nil {
-			fmt.Printf("Error reading body %v", err)
+			log.WithError(err).Error("Error reading request from POST body")
 		}
 		r.Body = string(body)
 	}
 
 	_, err := db.NamedExec(insertRequestSQL, r)
 	if err != nil {
-		fmt.Printf("ERROR INSERTING REQUEST", err)
+		log.WithError(err).Error("Error INSERTING Request")
 	}
 
 	return *req, nil

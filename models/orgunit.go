@@ -158,6 +158,18 @@ func (o *OrganisationUnit) ValidateUID() bool {
 	return re.MatchString(o.UID)
 }
 
+func (o *OrganisationUnit) GetGroups() []OrgUnitGroup {
+	dbConn := db.GetDB()
+	ouGroups := []OrgUnitGroup{}
+	err := dbConn.Select(&ouGroups, `SELECT * FROM orgunitgroup WHERE id IN 
+                (SELECT orgunitgroupid FROM orgunitgroupmembers WHERE organisationunitid = $1)`, o.DBID())
+	if err != nil {
+		log.WithError(err).Error("Failed to get organisation unit groups")
+		return nil
+	}
+	return ouGroups
+}
+
 func GetOUByMFLParentId(mflParentId string) dbutils.Int {
 	dbConn := db.GetDB()
 	var id dbutils.Int
@@ -191,13 +203,13 @@ RETURNING id
 
 func (o *OrganisationUnit) ExistsInDB() bool {
 	dbConn := db.GetDB()
-	var id int
-	err := dbConn.Get(&id, "SELECT count(*) FROM organisationunit WHERE uid = $1", o.UID)
+	var count int
+	err := dbConn.Get(&count, "SELECT count(*) FROM organisationunit WHERE uid = $1", o.UID)
 	if err != nil {
-		log.WithError(err).Info("Error reading organisation uni:")
+		log.WithError(err).Info("Error reading organisation unit:")
 		return false
 	}
-	return id > 0
+	return count > 0
 }
 
 func (o *OrganisationUnit) NewOrgUnit() {
@@ -227,27 +239,30 @@ func (o *OrganisationUnit) NewOrgUnit() {
 	_ = rows.Close()
 }
 
-func (o *OrganisationUnit) CompareDefinition(newDefinition dbutils.MapAnything) (bool, error) {
+func (o *OrganisationUnit) CompareDefinition(newDefinition dbutils.MapAnything) (bool, dbutils.MapAnything, error) {
 	dbConn := db.GetDB()
 	var matches bool
+	var diff dbutils.MapAnything
 	oldFacilityJSON, err := json.Marshal(o)
 	if err != nil {
 		log.WithError(err).Info("Failed to convert facility object to JSON")
-		return false, err
+		return false, nil, err
 	}
 	newFacilityJSON, err := json.Marshal(newDefinition)
 	if err != nil {
 		log.WithError(err).Info("Failed to convert new facility object to JSON")
-		return false, err
+		return false, diff, err
 	}
 
-	err = dbConn.Get(&matches, `SELECT jsonb_diff_val($1::JSONB, $2::JSONB) = '{}'::JSONB`,
+	err = dbConn.Get(&diff, `SELECT jsonb_diff_val($1::JSONB, $2::JSONB)`,
 		oldFacilityJSON, newFacilityJSON)
 	if err != nil {
 		log.WithError(err).Info("Failed the JSON objects for new and old facility definition")
-		return false, err
+		return false, diff, err
 	}
-	return matches, nil
+	matches = len(diff) == 0
+
+	return matches, diff, nil
 }
 
 func (o *OrganisationUnit) UpdateMFLID(mflID string) {
@@ -400,6 +415,12 @@ func (r *OrgUnitRevision) NewOrgUnitRevision() {
                             revision, definition) VALUES (:uid, :organisationunit_id, TRUE, :revision, :definition)`, r)
 	if err != nil {
 		log.WithError(err).Info("Failed to Log Failure")
+		return
+	}
+	_, err = dbConn.NamedExec(`UPDATE orgunitrevision SET is_active= False 
+        WHERE organisationunit_id = :organisationunit_id AND uid <> :uid`, r)
+	if err != nil {
+		log.WithError(err).Error("Failed to deactivate previous revisions for facility")
 	}
 }
 
@@ -423,4 +444,20 @@ func (f *OrgUnitFailure) NewOrgUnitFailure() {
 		log.WithError(err).Info("Failed to Log Failure")
 	}
 	// _ = rows.Close()
+}
+
+type MetadataObject struct {
+	Operation string `json:"op"`
+	Path      string `json:"path"`
+	Value     any    `json:"value"`
+}
+
+func GenerateMetadataPayload(newFacility, diffMap dbutils.MapAnything) []MetadataObject {
+	metaDataSlice := make([]MetadataObject, len(diffMap))
+
+	for k := range newFacility {
+		m := MetadataObject{Operation: "add", Path: k, Value: newFacility[k]}
+		metaDataSlice = append(metaDataSlice, m)
+	}
+	return metaDataSlice
 }
