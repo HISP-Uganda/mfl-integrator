@@ -10,9 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -48,35 +50,35 @@ type ServerID int64
 // Server is our user object
 type Server struct {
 	s struct {
-		ID                      ServerID       `db:"id" json:"-"`
-		UID                     string         `db:"uid" json:"uid,omitempty"`
-		Name                    string         `db:"name" json:"name" validate:"required"`
-		Username                string         `db:"username" json:"username"`
-		Password                string         `db:"password" json:"password,omitempty"`
-		IsProxyServer           bool           `db:"is_proxy_server" json:"isProxyServer,omitempty"` // whether response is received as is
-		SystemType              string         `db:"system_type" json:"systemType,omitempty"`        // the type of system e.g DHIS2, Other is the default
-		EndPointType            string         `db:"endpoint_type" json:"endPointType,omitempty"`    // e.g /dataValueSets,
-		AuthToken               string         `db:"auth_token" json:"AuthToken"`
-		IPAddress               string         `db:"ipaddress" json:"IPAddress"` // Usefull for setting Trusted Proxies
-		URL                     string         `db:"url" json:"URL" validate:"required,url"`
-		CCURLS                  pq.StringArray `db:"cc_urls" json:"CCURLS,omitempty"`                   // just an additional URL to receive same request
-		CallbackURL             string         `db:"callback_url" json:"callbackURL,omitempty"`         // receives response on success call to url
-		HTTPMethod              string         `db:"http_method" json:"HTTPMethod" validate:"required"` // the HTTP Method used when calling the url
-		AuthMethod              string         `db:"auth_method" json:"AuthMethod" validate:"required"` // the Authentication Method used
-		AllowCallbacks          bool           `db:"allow_callbacks" json:"allowCallbacks,omitempty"`   // Whether to allow calling sending callbacks
-		AllowCopies             bool           `db:"allow_copies" json:"allowCopies,omitempty"`         // Whether to allow copying similar request to CCURLs
-		UseAsync                bool           `db:"use_async" json:"useAsync,omitempty"`
-		UseSSL                  bool           `db:"use_ssl" json:"useSSL,omitempty"`
-		ParseResponses          bool           `db:"parse_responses" json:"parseResponses,omitempty"`
-		SSLClientCertKeyFile    string         `db:"ssl_client_certkey_file" json:"sslClientCertkeyFile"`
-		StartOfSubmissionPeriod int            `db:"start_submission_period" json:"startSubmissionPeriod"`
-		EndOfSubmissionPeriod   int            `db:"end_submission_period" json:"endSubmissionPeriod"`
-		XMLResponseXPATH        string         `db:"xml_response_xpath"  json:"XMLResponseXPATH"`
-		JSONResponseXPATH       string         `db:"json_response_xpath" json:"JSONResponseXPATH"`
-		Suspended               bool           `db:"suspended" json:"suspended,omitempty"`
-		URLParams               dbutils.JSON   `db:"url_params" json:"URLParams,omitempty"`
-		Created                 time.Time      `db:"created" json:"created,omitempty"`
-		Updated                 time.Time      `db:"updated" json:"updated,omitempty"`
+		ID                      ServerID            `db:"id" json:"-"`
+		UID                     string              `db:"uid" json:"uid,omitempty"`
+		Name                    string              `db:"name" json:"name" validate:"required"`
+		Username                string              `db:"username" json:"username"`
+		Password                string              `db:"password" json:"password,omitempty"`
+		IsProxyServer           bool                `db:"is_proxy_server" json:"isProxyServer,omitempty"` // whether response is received as is
+		SystemType              string              `db:"system_type" json:"systemType,omitempty"`        // the type of system e.g DHIS2, Other is the default
+		EndPointType            string              `db:"endpoint_type" json:"endPointType,omitempty"`    // e.g /dataValueSets,
+		AuthToken               string              `db:"auth_token" json:"AuthToken"`
+		IPAddress               string              `db:"ipaddress" json:"IPAddress"` // Usefull for setting Trusted Proxies
+		URL                     string              `db:"url" json:"URL" validate:"required,url"`
+		CCURLS                  pq.StringArray      `db:"cc_urls" json:"CCURLS,omitempty"`                   // just an additional URL to receive same request
+		CallbackURL             string              `db:"callback_url" json:"callbackURL,omitempty"`         // receives response on success call to url
+		HTTPMethod              string              `db:"http_method" json:"HTTPMethod" validate:"required"` // the HTTP Method used when calling the url
+		AuthMethod              string              `db:"auth_method" json:"AuthMethod" validate:"required"` // the Authentication Method used
+		AllowCallbacks          bool                `db:"allow_callbacks" json:"allowCallbacks,omitempty"`   // Whether to allow calling sending callbacks
+		AllowCopies             bool                `db:"allow_copies" json:"allowCopies,omitempty"`         // Whether to allow copying similar request to CCURLs
+		UseAsync                bool                `db:"use_async" json:"useAsync,omitempty"`
+		UseSSL                  bool                `db:"use_ssl" json:"useSSL,omitempty"`
+		ParseResponses          bool                `db:"parse_responses" json:"parseResponses,omitempty"`
+		SSLClientCertKeyFile    string              `db:"ssl_client_certkey_file" json:"sslClientCertkeyFile"`
+		StartOfSubmissionPeriod int                 `db:"start_submission_period" json:"startSubmissionPeriod"`
+		EndOfSubmissionPeriod   int                 `db:"end_submission_period" json:"endSubmissionPeriod"`
+		XMLResponseXPATH        string              `db:"xml_response_xpath"  json:"XMLResponseXPATH"`
+		JSONResponseXPATH       string              `db:"json_response_xpath" json:"JSONResponseXPATH"`
+		Suspended               bool                `db:"suspended" json:"suspended,omitempty"`
+		URLParams               dbutils.MapAnything `db:"url_params" json:"URLParams,omitempty"`
+		Created                 time.Time           `db:"created" json:"created,omitempty"`
+		Updated                 time.Time           `db:"updated" json:"updated,omitempty"`
 	}
 }
 
@@ -144,6 +146,21 @@ func (s *Server) CreatedOn() time.Time { return s.s.Created }
 // UpdatedOn return time when server/app was updated
 func (s *Server) UpdatedOn() time.Time { return s.s.Updated }
 
+// CompleteURL returns server URL plus its URLParams
+func (s *Server) CompleteURL() string {
+	p := url.Values{}
+	for k, v := range s.s.URLParams {
+		p.Add(k, fmt.Sprintf("%v", v))
+	}
+	sURL := s.s.URL
+	if strings.LastIndex(sURL, "?") == len(sURL)-1 {
+		sURL += p.Encode()
+	} else {
+		sURL += "?" + p.Encode()
+	}
+	return sURL
+}
+
 // GetServerByID returns server object using id
 func GetServerByID(id int64) Server {
 	srv := Server{}
@@ -157,7 +174,20 @@ func GetServerByID(id int64) Server {
 
 }
 
-// Self
+// GetServerByName returns server object using id
+func GetServerByName(name string) (Server, error) {
+	srv := Server{}
+	err := db.GetDB().Get(&srv.s, "SELECT * FROM servers WHERE name = $1", name)
+
+	if err != nil {
+		fmt.Printf("Error geting server: [%v]", err)
+		return Server{}, errors.New(fmt.Sprintf("Server with name '%s' Not found!", name))
+	}
+	return srv, nil
+
+}
+
+// Self returns server map
 func (s *Server) Self() map[string]any {
 	srvJSON, err := json.Marshal(s.s)
 	if err != nil {
@@ -274,10 +304,10 @@ func GetServers(db *sqlx.DB, page string, pageSize string,
 const insertServerSQL = `
 INSERT INTO servers(uid, name, username, password, url, ipaddress, auth_method, auth_token,
        callback_url, allow_callbacks, cc_urls, allow_copies, start_submission_period, end_submission_period,
-       parse_responses, use_ssl, suspended, ssl_client_certkey_file, json_response_xpath, xml_response_xpath, endpoint_type)
+       parse_responses, use_ssl, suspended, ssl_client_certkey_file, json_response_xpath, xml_response_xpath, endpoint_type, url_params)
        VALUES (:uid,:name,:username,:password,:url,:ipaddress,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
                :cc_urls,:allow_copies,:start_submission_period,:end_submission_period,:parse_responses,:use_ssl,
-               :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type)
+               :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type, :url_params)
 `
 
 // NewServer creates new server and saves it in DB

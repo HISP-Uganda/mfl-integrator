@@ -28,7 +28,7 @@ CREATE INDEX orgunitgroup_name_idx ON orgunitgroup(id);
 CREATE TABLE organisationunit(
     id BIGSERIAL NOT NULL PRIMARY KEY,
     uid TEXT NOT NULL UNIQUE,
-    code VARCHAR(50),
+    code VARCHAR(50) DEFAULT '',
     name TEXT NOT NULL DEFAULT '',
     shortname TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
@@ -55,6 +55,8 @@ CREATE TABLE organisationunit(
 CREATE INDEX organisationunit_name_idx ON organisationunit(name);
 CREATE INDEX organisationunit_level_idx ON organisationunit(hierarchylevel);
 CREATE INDEX organisationunit_path_idx ON organisationunit(path);
+CREATE INDEX organisationunit_mflid_idx ON organisationunit(mflid);
+CREATE INDEX organisationunit_mflparent_idx ON organisationunit(mflparent);
 CREATE INDEX organisationunit_parent_idx ON organisationunit(parentid);
 CREATE INDEX organisationunit_created_idx ON organisationunit(created);
 CREATE INDEX organisationunit_updated_idx ON organisationunit(updated);
@@ -414,6 +416,48 @@ BEGIN
         END LOOP;
     RETURN result;
 END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION geometry_geojson(geom geometry, lvl INT) RETURNS JSON AS $$
+    DECLARE
+        ret JSON;
+    BEGIN
+        SELECT
+                CASE
+                    WHEN geom IS NOT NULL THEN st_asgeojson(geom)::JSON
+                    ELSE
+                        CASE
+                            WHEN lvl = 1 THEN
+                                '{"type": "Polygon", "coordinates": []}'::JSON
+                            WHEN lvl = 2 THEN
+                                '{"type": "Polygon", "coordinates": []}'::JSON
+                            WHEN lvl = 3 THEN
+                                '{"type": "Polygon", "coordinates": []}'::JSON
+                            WHEN lvl = 4 THEN
+                                '{"type": "MultiPolygon", "coordinates": []}'::JSON
+                            WHEN lvl = 5 THEN
+                                '{"type": "Point", "coordinates": []}'::JSON
+                        END
+                END
+        INTO ret;
+        RETURN ret;
+    END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_parent(i BIGINT) RETURNS JSON AS $$
+DECLARE
+    parent TEXT := '';
+    pid BIGINT;
+BEGIN
+    SELECT parentid INTO pid FROM organisationunit WHERE id = i;
+    IF FOUND THEN
+        SELECT
+            ('{}')::JSON
+            INTO parent FROM organisationunit WHERE id = pid;
+    END IF;
+
+    RETURN parent;
+END
 $$ LANGUAGE plpgsql;
 
 -- Data Follows

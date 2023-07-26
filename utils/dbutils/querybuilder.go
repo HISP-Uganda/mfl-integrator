@@ -61,10 +61,10 @@ func FieldsToString(fields []Field) string {
 
 		switch f.TablePrefix {
 		case "":
-			fmt.Fprintf(&fieldsStr, "%s %s", f.Name, f.Alias)
+			_, _ = fmt.Fprintf(&fieldsStr, "%s %s", f.Name, f.Alias)
 			// fieldsStr.WriteString("%s")
 		default:
-			fmt.Fprintf(&fieldsStr, "%s.%s %s", f.TablePrefix, f.Name, f.Alias)
+			_, _ = fmt.Fprintf(&fieldsStr, "%s.%s %s", f.TablePrefix, f.Name, f.Alias)
 		}
 		if idx != len(fields)-1 {
 			fieldsStr.WriteString(", ")
@@ -80,9 +80,9 @@ func OrderByToString(orders []Order) string {
 	var orderByStr bytes.Buffer
 	for idx, o := range orders {
 		if len(o.Field.TablePrefix) > 0 {
-			fmt.Fprintf(&orderByStr, " %s.%s %s ", o.Field.TablePrefix, o.Field.Name, o.Arrangement)
+			_, _ = fmt.Fprintf(&orderByStr, " %s.%s %s ", o.Field.TablePrefix, o.Field.Name, o.Arrangement)
 		} else {
-			fmt.Fprintf(&orderByStr, " %s %s ", o.Field.Name, o.Arrangement)
+			_, _ = fmt.Fprintf(&orderByStr, " %s %s ", o.Field.Name, o.Arrangement)
 		}
 		if idx != len(orders)-1 {
 			orderByStr.WriteString(", ")
@@ -102,14 +102,14 @@ func QueryConditions(conditions []Condition) string {
 
 		switch c.Field.TablePrefix {
 		case "":
-			fmt.Fprintf(&condStr, "%s %s '%s'",
+			_, _ = fmt.Fprintf(&condStr, "%s %s '%s'",
 				c.Field.Name, c.Operator, c.Value)
 		default:
-			fmt.Fprintf(&condStr, "%s.%s %s '%s'",
+			_, _ = fmt.Fprintf(&condStr, "%s.%s %s '%s'",
 				c.Field.TablePrefix, c.Field.Name, c.Operator, c.Value)
 		}
 		if idx != len(conditions)-1 {
-			fmt.Fprintf(&condStr, `
+			_, _ = fmt.Fprintf(&condStr, `
 	AND `)
 
 		} else {
@@ -124,7 +124,7 @@ func QueryJoins(joins []Join) string {
 	var joinStr bytes.Buffer
 
 	for _, j := range joins {
-		fmt.Fprintf(&joinStr, `%s JOIN %s %s ON(%s)
+		_, _ = fmt.Fprintf(&joinStr, `%s JOIN %s %s ON(%s)
 `, j.Kind, j.Table.Name, j.Table.Alias, j.On)
 	}
 	return joinStr.String()

@@ -143,6 +143,7 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 	r.MSISDN = c.Query("msisdn")
 	r.Facility = c.Query("facility")
 	r.RawMsg = c.Query("rawMsg")
+	r.URLSuffix = c.DefaultQuery("urlSuffix", "")
 	if c.Query("isQueryParams") == "true" {
 		r.BodyIsQueryParams = true
 	}

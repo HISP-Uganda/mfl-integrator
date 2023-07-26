@@ -306,7 +306,11 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 		fmt.Printf("Failed to marshal request body")
 		return nil, err
 	}
-	req, err := http.NewRequest(destination.HTTPMethod(), destination.URL(), bytes.NewReader(marshalled))
+	destURL := destination.URL()
+	if len(r.URLSurffix) > 0 {
+		destURL += r.URLSurffix
+	}
+	req, err := http.NewRequest(destination.HTTPMethod(), destURL, bytes.NewReader(marshalled))
 
 	switch destination.AuthMethod() {
 	case "Token":

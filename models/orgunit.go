@@ -2,7 +2,10 @@ package models
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	log "github.com/sirupsen/logrus"
@@ -15,6 +18,25 @@ import (
 type Geometry struct {
 	Type        string       `json:"type"`
 	Coordinates dbutils.JSON `json:"coordinates"`
+}
+
+// Scan implements the driver.Valuer interface
+func (a *Geometry) Scan(value interface{}) error {
+	b, ok := value.([]byte)
+	if !ok {
+		switch value.(type) {
+		case string:
+			b = []byte(value.(string))
+		default:
+			return errors.New(fmt.Sprintf("type assertion to []byte failed type: %T", value))
+		}
+	}
+
+	return json.Unmarshal(b, &a)
+}
+
+func (a Geometry) Value() (driver.Value, error) {
+	return json.Marshal(a)
 }
 
 //func (g *Geometry) UnmarshalJSON(data []byte) error {
@@ -158,6 +180,39 @@ func (o *OrganisationUnit) ValidateUID() bool {
 	return re.MatchString(o.UID)
 }
 
+func (o *OrganisationUnit) Parent() map[string]string {
+	dbConn := db.GetDB()
+	parentUID := ""
+	parentMap := make(map[string]string)
+	err := dbConn.Get(&parentUID, `SELECT uid FROM organisationunit WHERE mflid = $1`, o.MFLParent)
+	if err != nil {
+		log.WithField("UID", o.UID).WithError(err).Error("Could not get parent ID")
+		return nil
+	}
+	parentMap["id"] = parentUID
+
+	return parentMap
+
+}
+func (o *OrganisationUnit) ParentByParentId() map[string]string {
+	dbConn := db.GetDB()
+	parentUID := ""
+	parentMap := make(map[string]string)
+	if parentId, err := o.ParentID.Value(); err == nil {
+		err := dbConn.Get(&parentUID, `SELECT uid FROM organisationunit WHERE id = $1`, parentId)
+		if err != nil {
+			log.WithField("UID", o.UID).WithError(err).Error("Could not get parent ID")
+			return nil
+		}
+		parentMap["id"] = parentUID
+	} else {
+		return nil
+	}
+
+	return parentMap
+
+}
+
 func (o *OrganisationUnit) GetGroups() []OrgUnitGroup {
 	dbConn := db.GetDB()
 	ouGroups := []OrgUnitGroup{}
@@ -168,6 +223,54 @@ func (o *OrganisationUnit) GetGroups() []OrgUnitGroup {
 		return nil
 	}
 	return ouGroups
+}
+
+func (o *OrganisationUnit) DHIS2Payload() dbutils.MapAnything {
+	o.ID = o.UID
+	if !o.ValidateUID() {
+		return nil
+	}
+	var facilityJSON dbutils.MapAnything
+	payload := make(dbutils.MapAnything)
+	fj, _ := json.Marshal(o)
+	_ = json.Unmarshal(fj, &facilityJSON)
+
+	for k := range facilityJSON {
+		switch k {
+		case "extras", "url", "uid", "mflId", "mflParent", "mflUID", "parentid", "level", "path":
+		default:
+			payload[k] = facilityJSON[k]
+		}
+	}
+	parent, _ := o.ParentID.Value()
+	if parent != nil {
+		payload["parent"] = o.ParentByParentId()
+	}
+	if len(o.Code) == 0 {
+		delete(payload, "code")
+	}
+	return payload
+}
+
+func (o *OrganisationUnit) OrgUnitDHIS2Payload() []byte {
+	payload := make(dbutils.MapAnything)
+	var facilityMap dbutils.MapAnything
+	_ = facilityMap.Scan(o)
+	// fj, _ := json.Marshal(o)
+	for k := range facilityMap {
+		switch k {
+		case "extras", "url", "uid", "mflId", "mflParent", "mflUID":
+		default:
+			payload[k] = facilityMap[k]
+
+		}
+	}
+	ret, err := json.Marshal(payload)
+	if err != nil {
+		log.WithError(err).Error("Failed to generate DHIS2 Payload for new facility")
+		return nil
+	}
+	return ret
 }
 
 func GetOUByMFLParentId(mflParentId string) dbutils.Int {
@@ -181,7 +284,7 @@ func GetOUByMFLParentId(mflParentId string) dbutils.Int {
 }
 
 func (o *OrganisationUnit) OrganisationUnitDBFields() []string {
-	e := reflect.ValueOf(&o).Elem()
+	e := reflect.ValueOf(o).Elem()
 	var ret []string
 	for i := 0; i < e.NumField(); i++ {
 		t := e.Type().Field(i).Tag.Get("db")
@@ -456,8 +559,12 @@ func GenerateMetadataPayload(newFacility, diffMap dbutils.MapAnything) []Metadat
 	metaDataSlice := make([]MetadataObject, len(diffMap))
 
 	for k := range newFacility {
-		m := MetadataObject{Operation: "add", Path: k, Value: newFacility[k]}
-		metaDataSlice = append(metaDataSlice, m)
+		switch k {
+		case "extras", "url", "uid", "mflId", "mflParent", "mflUID":
+		default:
+			m := MetadataObject{Operation: "add", Path: k, Value: newFacility[k]}
+			metaDataSlice = append(metaDataSlice, m)
+		}
 	}
 	return metaDataSlice
 }

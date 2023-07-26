@@ -47,6 +47,7 @@ func main() {
 		LoadOuGroups()
 		LoadLocations() // Load organisation units - before facility in base DHIS2 instance
 		MatchLocationsWithMFL()
+		SyncLocationsToDHIS2Instances()
 		// fetch facilities after initial run, just use a scheduled job.
 		FetchFacilities()
 
@@ -121,7 +122,8 @@ func startAPIServer(wg *sync.WaitGroup) {
 		v2.DELETE("/queue/:id", q.DeleteRequest)
 
 		ou := new(controllers.OrgUnitController)
-		v2.POST("/organisationUnit", ou.OrgUnit)
+		v2.POST("/organisationUnits", ou.OrgUnit)
+		v2.GET("/organisationUnits", ou.GetOrganisationUnits)
 
 		s := new(controllers.ServerController)
 		v2.POST("/servers", s.CreateServer)
@@ -135,6 +137,6 @@ func startAPIServer(wg *sync.WaitGroup) {
 	_ = router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
 }
 
-func LoadAndMatch() {
-
-}
+//func LoadAndMatch() {
+//
+//}

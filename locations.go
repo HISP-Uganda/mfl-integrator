@@ -11,6 +11,7 @@ import (
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/buger/jsonparser"
 	_ "github.com/lib/pq"
+	"github.com/samber/lo"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
 	log "github.com/sirupsen/logrus"
 	"net/url"
@@ -99,6 +100,9 @@ func LoadOuGroups() {
 		}
 		for i := range ouGroups {
 			ouGroups[i].UID = ouGroups[i].ID
+			if len(ouGroups[i].ShortName) == 0 {
+				ouGroups[i].ShortName = ouGroups[i].Name
+			}
 			log.WithFields(
 				log.Fields{"uid": ouGroups[i].ID, "name": ouGroups[i].Name, "level": ouGroups[i].ShortName}).Info("Creating New Orgunit Group")
 			ouGroups[i].NewOrgUnitGroup()
@@ -324,6 +328,7 @@ func FetchFacilities() {
 				// Track the versions
 				var fj dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
+				fj["parent"] = facility.Parent()
 				facilityRevision := models.OrgUnitRevision{
 					OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
 				}
@@ -334,12 +339,13 @@ func FetchFacilities() {
 				var fj dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
 				newMatchedOld, diffMap, err := facility.CompareDefinition(fj)
+				fj["parent"] = facility.Parent()
 				if err != nil {
 					log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
 				}
 				if newMatchedOld {
 					// new definition matched the old
-					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID()}).Info(
+					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID(), "Parent": fj["parent"]}).Info(
 						"========= Facility has no changes =======")
 					continue
 				} else {
@@ -444,6 +450,7 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	facility.ID = historicalId
 	facility.UID = historicalId
 	facility.Name = name
+	facility.ShortName = name
 	facility.URL = _url
 	facility.MFLID = id
 	facility.MFLUID = mflUniqueIdentifier
@@ -456,9 +463,213 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	facility.Email = email
 	facility.Extras = extensions
 	facility.Geometry = models.Geometry{Type: "Point", Coordinates: coordinateBytes}
+	ouUID := models.GetOuGroupUIDByName(levelOfCare)
 	facility.OrgUnitGroups = []models.OrgUnitGroup{
-		{Name: levelOfCare, UID: models.GetOuGroupUIDByName(levelOfCare)},
+		{Name: levelOfCare, UID: ouUID, ID: ouUID},
 	}
 
 	return facility
+}
+
+func SyncLocationsToDHIS2Instances() {
+	for _, serverName := range strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2HierarchyServers, ",") {
+		// Servers in this config can receive the base DHIS2 organisation unit hierarchy
+		log.WithField("CCDHIS2", serverName).Info("CC Hierarchy Servers")
+		server, err := models.GetServerByName(serverName)
+		if err != nil {
+			log.WithError(err).Info("Could not proceed to CC hierarchy to server")
+		}
+		// check if we already have ous in the instance and only create if none present
+		ouURL := server.URL()
+		baseDHIS2URL, err := utils.GetDHIS2BaseURL(ouURL)
+		if err != nil {
+			log.WithError(err).Info("CAUTION DHIS2 API URL should have /api/ part")
+			continue
+		}
+		p := url.Values{}
+		p.Add("fields", "id,name")
+		p.Add("paging", "true")
+		p.Add("pageSize", "1")
+		p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel-1))
+		chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?"
+		//if strings.LastIndex(ouURL, "?") == len(ouURL)-1 {
+		//	ouURL += p.Encode()
+		//} else {
+		//	ouURL += "?" + p.Encode()
+		//}
+		chekOusURL += p.Encode()
+		log.WithFields(log.Fields{"ServerURL": chekOusURL, "Name": server.Name()}).Info("Trying to send hierarchy to server")
+
+		var respBody []byte
+		switch server.AuthMethod() {
+		case "Basic":
+			resp, err := utils.GetWithBasicAuth(chekOusURL, server.Username(), server.Password())
+			respBody = resp
+			if err != nil {
+				log.WithError(err).Error("Failed to get ous from server")
+				continue
+			}
+
+		case "Token":
+			resp, err := utils.GetWithToken(chekOusURL, server.AuthToken())
+			respBody = resp
+			if err != nil {
+				log.WithError(err).Error("Failed to get ous from server")
+				continue
+			}
+		default:
+			// pass
+		}
+		if respBody != nil {
+			v, _, _, _ := jsonparser.Get(respBody, "pager", "total")
+			if string(v) != "0" && !*config.ForceSync {
+
+				log.WithField("ForceSync", *config.ForceSync).Info("FORCE SYNC >>>>>>>>>>")
+				continue // we have ous already
+			}
+			log.WithField("Server", serverName).Info("We can now sync the hierarchy!!")
+			//Send Ou Levels
+			syncOuLevels := GenerateOuLevelMetadata()
+			levelsPayload := make(map[string][]models.MetadataOuLevel)
+			levelsPayload["organisationUnitLevels"] = syncOuLevels
+			sendMetadata(server, levelsPayload)
+
+			// send Ou Groups
+			syncOuGroups := GenerateOuGroupsMetadata()
+			groupsPayload := make(map[string][]models.MetadataOuGroup)
+			groupsPayload["organisationUnitGroups"] = syncOuGroups
+			sendMetadata(server, groupsPayload)
+
+			// Send Ous
+			//for level := 1; level < 3; level++ {
+			for level := 1; level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; level++ {
+
+				syncOus := GenerateOuMetadata(level)
+				//for _, ou := range syncOus {
+				//	pp, _ := json.Marshal(ou)
+				//	log.WithFields(log.Fields{"Payload": string(pp), "Server": serverName, "UID": ou.UID, "ID": ou.ID}).Info("DEBUGGGGGGGG")
+				//	rBody := sendMetadata(server, ou)
+				//	if rBody != nil {
+				//		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+				//	}
+				//}
+				ouChunks := lo.Chunk(syncOus, 100)
+
+				for _, chunck := range ouChunks {
+					payload := make(map[string][]models.MetadataOu)
+					payload["organisationUnits"] = chunck
+
+					rBody := sendMetadata(server, payload)
+					if rBody != nil {
+						log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+					}
+					time.Sleep(3000)
+
+				}
+
+			}
+
+		}
+
+	}
+}
+
+const selectMetaDatOusSQL = `SELECT uid,name, code, shortname,description, path, hierarchylevel, 
+    	to_char(openingdate, 'YYYY-mm-dd') AS openingdate, geometry_geojson(geometry, hierarchylevel) AS geometry, 
+    	phonenumber, email, address, get_parent(id) parent 
+		FROM organisationunit 
+		 `
+
+// WHERE hierarchylevel = $1 `
+
+func GenerateOuMetadata(level int) []models.MetadataOu {
+	var ous []models.MetadataOu
+	dbConn := db.GetDB()
+	ouSQL := selectMetaDatOusSQL
+	if level == 1 {
+		topLevelUIDs := strings.Split(config.MFLIntegratorConf.API.MFLDHIS2TreeIDs, ",")
+		if len(topLevelUIDs) > 0 {
+			for i, uid := range topLevelUIDs {
+				topLevelUIDs[i] = fmt.Sprintf("'%s'", uid)
+			}
+			ouSQL += fmt.Sprintf(" WHERE uid IN(%s)  AND hierarchylevel = $1", strings.Join(topLevelUIDs, ","))
+		}
+	} else {
+		ouSQL += " WHERE hierarchylevel = $1 "
+
+	}
+	err := dbConn.Select(&ous, ouSQL, level)
+	if err != nil {
+		log.WithError(err).WithField("SQL", ouSQL).Error("Failed to generate Org Units Metadata")
+		return nil
+	}
+	ous = lo.Map(ous, func(item models.MetadataOu, index int) models.MetadataOu {
+		item.ID = item.UID
+		return item
+	})
+
+	return ous
+}
+
+func GenerateOuLevelMetadata() []models.MetadataOuLevel {
+	var ouLevels []models.MetadataOuLevel
+	dbConn := db.GetDB()
+
+	err := dbConn.Select(&ouLevels, `SELECT uid,name, 
+       case when code is null then '' else code end, level  FROM orgunitlevel`)
+	if err != nil {
+		log.WithError(err).Error("Failed to generate Org Unit Levels Metadata")
+		return nil
+	}
+	return ouLevels
+}
+
+func GenerateOuGroupsMetadata() []models.MetadataOuGroup {
+	var ouGroups []models.MetadataOuGroup
+	dbConn := db.GetDB()
+
+	err := dbConn.Select(&ouGroups, `SELECT uid,name, case when code is null then '' else code end, shortname  FROM orgunitgroup`)
+	if err != nil {
+		log.WithError(err).Error("Failed to generate Org Unit Groups Metadata")
+		return nil
+	}
+	return ouGroups
+}
+
+func sendMetadata(server models.Server, data interface{}) []byte {
+	mURL := server.CompleteURL()
+	log.WithField("URL", mURL).Info("MetaDataURL")
+	serverName := server.Name()
+
+	var rBody []byte
+	switch server.AuthMethod() {
+	case "Basic":
+		resp, err := utils.PostWithBasicAuth(mURL, data, server.Username(), server.Password())
+		rBody = resp
+		if err != nil {
+			ouList := data.(map[string][]models.MetadataOu)["organisationUnits"]
+			troubleOus := lo.Map(ouList, func(item models.MetadataOu, index int) string {
+				return item.ID
+			})
+			log.WithFields(log.Fields{"Server": serverName, "TroubleOus": troubleOus}).WithError(err).Error(
+				"Failed to import metadata in server")
+		}
+	case "Token":
+		resp, err := utils.PostWithToken(mURL, data, server.AuthToken())
+		rBody = resp
+		if err != nil {
+			ouList := data.(map[string][]models.MetadataOu)["organisationUnits"]
+			troubleOus := lo.Map(ouList, func(item models.MetadataOu, index int) string {
+				return item.ID
+			})
+			log.WithFields(log.Fields{"Server": serverName, "TroubleOus": troubleOus}).WithError(err).Error(
+				"Failed to import metadata in server")
+		}
+	default:
+		//
+	}
+	if rBody != nil {
+		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+	}
+	return rBody
 }

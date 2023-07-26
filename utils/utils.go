@@ -1,16 +1,22 @@
 package utils
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
+	log "github.com/sirupsen/logrus"
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +27,14 @@ func GetDefaultEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func GetDHIS2BaseURL(url string) (string, error) {
+	if strings.Contains(url, "/api/") {
+		pos := strings.Index(url, "/api/")
+		return url[:pos], nil
+	}
+	return url, errors.New("URL doesn't contain /api/ part")
 }
 
 const alphabet = `abcdefghijklmnopqrstuvwxyz`
@@ -58,6 +72,80 @@ func GetUID() string {
 	return s
 }
 
+func GetWithToken(
+	baseUrl string, authToken string) ([]byte, error) {
+
+	req, err := http.NewRequest("GET", baseUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add token authentication
+	token := "ApiToken " + authToken
+	req.Header.Set("Authorization", token)
+
+	// Create custom transport with TLS settings
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err)
+		return nil, err
+	}
+	_ = resp.Body.Close()
+	return body, nil
+}
+
+func PostWithToken(
+	baseUrl string, data interface{}, authToken string) ([]byte, error) {
+
+	requestBody, err := json.Marshal(data)
+	if err != nil {
+
+		log.WithError(err).Info("XXXXX ERROR")
+		return nil, err
+	}
+	req, err := http.NewRequest("POST", baseUrl, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add token authentication
+	token := "ApiToken " + authToken
+	req.Header.Set("Authorization", token)
+
+	// Create custom transport with TLS settings
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err)
+		return nil, err
+	}
+	_ = resp.Body.Close()
+	return body, nil
+}
+
 func GetWithBasicAuth(
 	baseUrl string, username, password string) ([]byte, error) {
 
@@ -84,12 +172,52 @@ func GetWithBasicAuth(
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Println("Error reading response body:", err)
 		return nil, err
 	}
+	_ = resp.Body.Close()
+	return body, nil
+}
+
+func PostWithBasicAuth(
+	baseUrl string, data interface{}, username, password string) ([]byte, error) {
+
+	requestBody, err := json.Marshal(data)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{"Data": fmt.Sprintf("%v", data)}).Info("XXXXX ERROR")
+		return nil, err
+	}
+	req, err := http.NewRequest("POST", baseUrl, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add basic authentication
+	auth := username + ":" + password
+	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+	req.Header.Set("Authorization", basicAuth)
+
+	// Create custom transport with TLS settings
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err)
+		return nil, err
+	}
+	_ = resp.Body.Close()
 	return body, nil
 }
 
@@ -125,12 +253,13 @@ func GetRequest(
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Println("Error reading response body:", err)
 		return nil, err
 	}
+
+	_ = resp.Body.Close()
 	return body, nil
 }
 
@@ -242,4 +371,101 @@ func addExtraParams(baseURL string, extraParams url.Values) (string, error) {
 
 	parsedURL.RawQuery = queryParams.Encode()
 	return parsedURL.String(), nil
+}
+
+// Paginator is the structure representing the paginator object
+type Paginator struct {
+	PageCount    int64
+	PageSize     int64 // the limit
+	Total        int64
+	CurrentPage  int64
+	NextPage     int64
+	PreviousPage int64
+	Offset       int64
+	PageExists   bool
+	Paging       bool
+}
+
+// HasNext returns true if there is a next page
+func (p *Paginator) HasNext() bool {
+	if p.HasPage(p.CurrentPage + 1) {
+		return true
+	}
+	return false
+}
+
+// HasPrev returns true if there is a previous page
+func (p *Paginator) HasPrev() bool {
+	if p.HasPage(p.CurrentPage-1) && (p.CurrentPage-1) != 0 {
+		return true
+	}
+	return false
+}
+
+// Pages returns the number of pages
+func (p *Paginator) Pages() int64 {
+	return int64(math.Ceil(
+		(float64(p.Total) / float64(p.PageSize))))
+}
+
+// HasPages returns true if there are pages
+func (p *Paginator) HasPages() bool {
+	if p.Total < 1 {
+		return false
+	}
+	return true
+}
+
+// HasPage returns true if @param page is available
+func (p *Paginator) HasPage(page int64) bool {
+	if p.HasPages() && page <= p.Pages() {
+		return true
+	}
+	return false
+}
+
+// FirstItem returns the number for first item in the page - used as OFFSET
+func (p *Paginator) FirstItem() int64 {
+	if p.PageCount < p.CurrentPage {
+		return p.Total + 1
+	}
+	return int64(math.Min(float64((p.CurrentPage-1)*p.PageSize+1), float64(p.Total)))
+}
+
+// LastItem returns the number for the last item in the page
+func (p *Paginator) LastItem() int64 {
+	return int64(math.Min(float64(p.FirstItem()+p.PageSize-1), float64(p.Total)))
+}
+
+// GetPaginator returns the a pointer to the Paginator structure
+func GetPaginator(totalRecords int64, pageSize string, page string, paging bool) Paginator {
+	p := Paginator{}
+	p.Paging = true
+	p.Total = totalRecords
+
+	ps, err := strconv.ParseInt(pageSize, 10, 64)
+	if err != nil {
+		log.WithError(err).Info("Failed to convert pageSize to integer. Defaulting to 50")
+		p.PageSize = 50
+	} else {
+		p.PageSize = ps
+	}
+
+	pc, err := strconv.ParseInt(page, 10, 64)
+	if err != nil {
+		log.WithError(err).Info("Failed to convert page to integer. Defaulting to 1")
+		p.CurrentPage = 1
+	} else {
+		p.CurrentPage = pc
+	}
+	p.PageCount = p.Pages()
+	p.Offset = p.FirstItem() - 1
+	if p.HasPrev() {
+		p.PreviousPage = p.CurrentPage - 1
+	}
+	if p.HasNext() {
+		p.NextPage = p.CurrentPage + 1
+	}
+	p.PageExists = p.HasPage(pc)
+	return p
 }
