@@ -498,6 +498,7 @@ type OrgUnitRevision struct {
 	Updated             string              `db:"updated" json:"updated,omitempty"`
 }
 
+// GetCurrentVersion returns the latest version number for the facility.
 func (r *OrgUnitRevision) GetCurrentVersion() int64 {
 	dbConn := db.GetDB()
 	var count int64
@@ -511,6 +512,7 @@ func (r *OrgUnitRevision) GetCurrentVersion() int64 {
 	return count
 }
 
+// NewOrgUnitRevision creates a new revision for facility in the db and increments version number
 func (r *OrgUnitRevision) NewOrgUnitRevision() {
 	dbConn := db.GetDB()
 	r.Revision = r.GetCurrentVersion() + 1

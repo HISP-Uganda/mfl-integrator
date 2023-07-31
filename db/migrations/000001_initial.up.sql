@@ -206,7 +206,7 @@ CREATE TABLE requests(
      statuscode text DEFAULT '',
      retries INTEGER NOT NULL DEFAULT 0,
      errors TEXT DEFAULT '', -- indicative response message
-     submissionid INTEGER NOT NULL DEFAULT 0, -- message_id in source app -> helpful when check for already sent submissions
+     submissionid TEXT NOT NULL DEFAULT '', -- message_id in source app -> helpful when check for already sent submissions
      frequency_type TEXT NOT NULL DEFAULT '',
      period TEXT NOT NULL DEFAULT '', --whether ssl is enabled for this server/app
      week TEXT DEFAULT '', -- reporting week

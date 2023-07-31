@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
+	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
 	"net/url"
 	"reflect"
@@ -21,6 +23,7 @@ import (
 )
 
 func init() {
+	CreateBaseDHIS2Server()
 	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
 
 	if err != nil {
@@ -79,14 +82,24 @@ type Server struct {
 		URLParams               dbutils.MapAnything `db:"url_params" json:"URLParams,omitempty"`
 		Created                 time.Time           `db:"created" json:"created,omitempty"`
 		Updated                 time.Time           `db:"updated" json:"updated,omitempty"`
+		AllowedSources          []string            `json:"allowedSources,omitempty"`
 	}
 }
 
 // ServerAllowedApps hold servers and servers they allow to communicate with
 type ServerAllowedApps struct {
-	ID             int64      `db:"id" json:"id"`
-	ServerID       ServerID   `db:"server_id" json:"server_id"`
-	AllowedServers []ServerID `db:"allowed_servers" json:"allowed_servers"`
+	ID             int64         `db:"id" json:"id"`
+	ServerID       int64         `db:"server_id" json:"server_id"`
+	AllowedServers pq.Int64Array `db:"allowed_sources" json:"allowed_sources"`
+}
+
+func (sa *ServerAllowedApps) Save() {
+	dbConn := db.GetDB()
+	_, err := dbConn.NamedExec(`INSERT INTO server_allowed_sources (server_id, allowed_sources)
+			VALUES(:server_id, :allowed_sources)`, sa)
+	if err != nil {
+		log.WithError(err).Error("Failed to save server allowed sources")
+	}
 }
 
 // ID return the id of this request
@@ -221,6 +234,18 @@ func GetServerIDByName(name string) int64 {
 
 }
 
+func GetServerUIDByName(name string) string {
+	var uid string
+	err := db.GetDB().Get(&uid, "SELECT uid FROM servers WHERE name = $1", name)
+
+	if err != nil {
+		fmt.Printf("Error geting server: [%v]", err)
+		return ""
+	}
+	return uid
+
+}
+
 func (s *Server) InSubmissionPeriod(tx *sqlx.Tx) bool {
 	inSubmissionPeriod := false
 	err := tx.Get(&inSubmissionPeriod, `SELECT in_submission_period($1)`, s.s.ID)
@@ -308,6 +333,7 @@ INSERT INTO servers(uid, name, username, password, url, ipaddress, auth_method, 
        VALUES (:uid,:name,:username,:password,:url,:ipaddress,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
                :cc_urls,:allow_copies,:start_submission_period,:end_submission_period,:parse_responses,:use_ssl,
                :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type, :url_params)
+	RETURNING id
 `
 
 // NewServer creates new server and saves it in DB
@@ -333,12 +359,114 @@ func NewServer(c *gin.Context, db *sqlx.DB) (Server, error) {
 		log.WithField("Server Name", srv.s.Name).Info("Server with same name already exists!")
 		return *srv, errors.New(fmt.Sprintf("Server with name %s already exists!", srv.s.Name))
 	} else {
-		_, err := db.NamedExec(insertServerSQL, srv.s)
+		rows, err := db.NamedQuery(insertServerSQL, srv.s)
 		if err != nil {
 			log.WithError(err).Error("Failed to save server to database")
 			return Server{}, err
 		}
+		for rows.Next() {
+			var serverId int64
+			_ = rows.Scan(&serverId)
+			if len(srv.s.AllowedSources) > 0 {
+				servers := lo.Map(srv.s.AllowedSources, func(name string, _ int) int64 {
+					return GetServerIDByName(name)
+				})
+				allowedSources := ServerAllowedApps{ServerID: serverId, AllowedServers: servers}
+				allowedSources.Save()
+
+			}
+
+		}
+		_ = rows.Close()
 	}
 
 	return *srv, nil
+}
+
+const updateServerSQL = `
+UPDATE servers SET (name, username, password, url, ipaddress, auth_method, auth_token,
+       callback_url, allow_callbacks, cc_urls, allow_copies, start_submission_period, end_submission_period,
+       parse_responses, use_ssl, suspended, ssl_client_certkey_file, json_response_xpath, xml_response_xpath, endpoint_type, url_params)
+	= (:name,:username,:password,:url,:ipaddress,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
+               :cc_urls,:allow_copies,:start_submission_period,:end_submission_period,:parse_responses,:use_ssl,
+               :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type, :url_params)
+	WHERE uid = :uid
+`
+
+func CreateServers(db *sqlx.DB, servers []Server) (dbutils.MapAnything, error) {
+	importSummary := make(dbutils.MapAnything)
+	importSummary["updated"] = 0
+	importSummary["created"] = 0
+	for _, server := range servers {
+		if !server.ValidateUID() {
+			server.SetUID(utils.GetUID())
+		}
+		if server.ExistsInDB() {
+			log.WithField("Server Name", server.s.Name).Info("Server with same name already exists!")
+			// return errors.New(fmt.Sprintf("Server with name %s already exists!", server.s.Name))
+			server.s.UID = GetServerUIDByName(server.Name())
+			_, err := db.NamedExec(updateServerSQL, server.s)
+			if err != nil {
+				log.WithError(err).Error("Failed to update server!")
+				return importSummary, err
+			}
+			log.WithField("ServerUID", server.s.UID).Info("Updating server!")
+			importSummary["updated"] = importSummary["updated"].(int) + 1
+		} else {
+			rows, err := db.NamedQuery(insertServerSQL, server.s)
+			if err != nil {
+				log.WithError(err).Error("Failed to save server to database")
+				return importSummary, err
+			}
+			for rows.Next() {
+				var serverId int64
+				_ = rows.Scan(&serverId)
+				if len(server.s.AllowedSources) > 0 {
+					servers := lo.Map(server.s.AllowedSources, func(name string, _ int) int64 {
+						return GetServerIDByName(name)
+					})
+					allowedSources := ServerAllowedApps{ServerID: serverId, AllowedServers: servers}
+					allowedSources.Save()
+
+				}
+
+			}
+			importSummary["created"] = importSummary["created"].(int) + 1
+			_ = rows.Close()
+		}
+	}
+	return importSummary, nil
+}
+
+func CreateBaseDHIS2Server() {
+	metadataServer := &Server{}
+	metadataServer.s.Name = "base_OU"
+	metadataServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/metadata.json"
+	metadataServer.s.Username = config.MFLIntegratorConf.API.MFLDHIS2User
+	metadataServer.s.Password = config.MFLIntegratorConf.API.MFLDHIS2Password
+	metadataServer.s.AuthMethod = "Basic"
+	metadataServer.s.AuthToken = config.MFLIntegratorConf.API.MFLDHIS2PAT
+	metadataServer.s.EndPointType = "OUMetadata"
+
+	metadataServer.s.IPAddress = "*"
+	metadataServer.s.HTTPMethod = "POST"
+	metadataServer.s.SystemType = "DHIS2"
+	metadataServer.s.AllowedSources = []string{"localhost"}
+	metadataServer.s.ParseResponses = true
+	var urlParams dbutils.MapAnything
+	if err := json.Unmarshal([]byte(`{"mergeMode":"REPLACE", "importStrategy": "CREATE_AND_UPDATE","async": false,
+"importReportMode": "DEBUG"}`), &urlParams); err != nil {
+		log.WithError(err).Error("Failed to unmarshal server URL params")
+		return
+	}
+	metadataServer.s.URLParams = urlParams
+	metadataServer.s.StartOfSubmissionPeriod = 0
+	metadataServer.s.EndOfSubmissionPeriod = 23
+
+	serverList := []Server{*metadataServer}
+	summary, err := CreateServers(db.GetDB(), serverList)
+	if err != nil {
+		log.WithError(err).Error("Failed to create base DHIS server in dispatcher")
+	}
+	log.WithFields(log.Fields{"Server": metadataServer.UID(), "Summary": summary}).Info("Server Creation Summary")
 }

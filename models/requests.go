@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
@@ -195,6 +196,66 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 	return *req, nil
 }
 
+func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
+	reqForm := &RequestForm{}
+
+	req := &Request{}
+	r := &req.r
+
+	contentType := c.Request.Header.Get("Content-Type")
+	switch contentType {
+	case "application/json", "application/json-patch+json", "application/geo+json":
+		if err := c.BindJSON(reqForm); err != nil {
+			log.WithError(err).Error("Error reading request object from POST body")
+		}
+		// log.WithField("New Server", s).Info("Going to create new server")
+	default:
+		//
+		log.WithField("Content-Type", contentType).Error("Unsupported content-Type")
+		return *req, errors.New(fmt.Sprintf("Unsupported Content-Type: %s", contentType))
+	}
+
+	r.Source = int(GetServerIDByName(reqForm.Source))
+	r.Destination = int(GetServerIDByName(reqForm.Destination))
+	if r.Source == 0 {
+		return *req, errors.New(fmt.Sprintf("Source server %s not found!", reqForm.Source))
+	}
+	if r.Destination == 0 {
+		return *req, errors.New(fmt.Sprintf("Destination server %s not found!", reqForm.Destination))
+
+	}
+	ccServers := lo.Map(reqForm.CCServers, func(name string, _ int) int64 {
+		return GetServerIDByName(name)
+	})
+	r.CCServers = ccServers
+	r.UID = utils.GetUID()
+	r.ContentType = reqForm.ContentType
+	r.SubmissionID = reqForm.SubmissionID
+	r.BatchID = reqForm.BatchID
+	r.Period = reqForm.Period
+	r.Week = reqForm.Week
+	r.Month = reqForm.Month
+	r.Year = reqForm.Year
+	r.MSISDN = reqForm.MSISDN
+	r.Facility = reqForm.Facility
+	r.RawMsg = reqForm.RawMsg
+	r.URLSuffix = reqForm.URLSuffix
+	if reqForm.BodyIsQueryParams {
+		r.BodyIsQueryParams = true
+	}
+	r.ReportType = reqForm.ReportType
+	r.ObjectType = reqForm.ObjectType
+	r.Errors = reqForm.Extras
+	r.District = reqForm.District
+	r.Body = reqForm.Body
+
+	_, err := db.NamedExec(insertRequestSQL, r)
+	if err != nil {
+		log.WithError(err).Error("Error INSERTING Request")
+	}
+	return *req, nil
+}
+
 func (r *Request) RequestDBFields() []string {
 	e := reflect.ValueOf(&r.r).Elem()
 	var ret []string
@@ -211,8 +272,36 @@ func (r *Request) RequestDBFields() []string {
 const insertRequestSQL = `
 INSERT INTO 
 requests (source, destination, uid, batchid, ctype, body, body_is_query_param, period, week, month, year,
-			raw_msg, msisdn, facility, district, report_type, object_type, extras, url_suffix,
+			raw_msg, msisdn, facility, district, report_type, object_type, extras, url_suffix, cc_servers,
 			created, updated) 
 	VALUES(:source, :destination, :uid, :batchid, :ctype, :body, :body_is_query_param, :period,
 			:week, :month, :year, :raw_msg, :msisdn, :facility, :district, :report_type, :object_type,
-			:extras, :url_suffix, now(), now())`
+			:extras, :url_suffix, :cc_servers, now(), now())`
+
+type RequestForm struct {
+	ID                RequestID `db:"id" json:"-"`
+	UID               string    `db:"uid" json:"uid"`
+	BatchID           string    `db:"batchid" json:"batchId,omitempty"`
+	Source            string    `db:"source" json:"source" validate:"required"`
+	Destination       string    `db:"destination" json:"destination" validate:"required"`
+	CCServers         []string  `db:"cc_servers" json:"CCServers,omitempty"`
+	ContentType       string    `db:"ctype" json:"contentType,omitempty" validate:"required"`
+	Body              string    `db:"body" json:"body" validate:"required"`
+	FrequencyType     string    `db:"frequency_type" json:"frequencyType,omitempty"`
+	Period            string    `db:"period" json:"period,omitempty"`
+	Day               string    `db:"day" json:"day,omitempty"`
+	Week              string    `db:"week" json:"week,omitempty"`
+	Month             string    `db:"month" json:"month,omitempty"`
+	Year              string    `db:"year" json:"year,omitempty"`
+	MSISDN            string    `db:"msisdn" json:"msisdn,omitempty"`
+	RawMsg            string    `db:"raw_msg" json:"rawMsg,omitempty"`
+	Facility          string    `db:"facility" json:"facility,omitempty"`
+	District          string    `db:"district" json:"district,omitempty"`
+	ReportType        string    `db:"report_type" json:"reportType,omitempty" validate:"required"` // type of object eg event, enrollment, datavalues
+	ObjectType        string    `db:"object_type" json:"objectType,omitempty"`                     // type of report as in source system
+	Extras            string    `db:"extras" json:"extras,omitempty"`
+	Suspended         bool      `db:"suspended" json:"suspended,omitempty"`                   // whether request is suspended
+	BodyIsQueryParams bool      `db:"body_is_query_param" json:"bodyIsQueryParams,omitempty"` // whether body is to be used a query parameters
+	SubmissionID      string    `db:"submissionid" json:"submissionId,omitempty"`             // a reference ID is source system
+	URLSuffix         string    `db:"url_suffix" json:"urlSuffix,omitempty"`
+}

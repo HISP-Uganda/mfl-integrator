@@ -19,11 +19,17 @@
     "parseResponses": true,
     "startSubmissionPeriod":0,
     "endSubmissionPeriod":23,
-    "URLParams": {"mergeMode":"", "async": false },
+    "URLParams": {
+      "async": false,
+      "mergeMode": "REPLACE",
+      "importStrategy": "CREATE_AND_UPDATE",
+      "importReportMode": "DEBUG"
+    },
     "suspended":false,
     "IPAddress": "*",
     "JSONResponseXPATH": "",
-    "XMLResponseXPATH": ""
+    "XMLResponseXPATH": "",
+    "allowedSources":["localhost"]
 
   },
   {
@@ -46,11 +52,17 @@
     "parseResponses": true,
     "startSubmissionPeriod":0,
     "endSubmissionPeriod":23,
-    "URLParams": {"mergeMode":"", "async": false },
+    "URLParams": {
+      "async": false,
+      "mergeMode": "REPLACE",
+      "importStrategy": "CREATE_AND_UPDATE",
+      "importReportMode": "DEBUG"
+    },
     "suspended":false,
     "IPAddress": "*",
     "JSONResponseXPATH": "",
-    "XMLResponseXPATH": ""
+    "XMLResponseXPATH": "",
+    "allowedSources":["localhost"]
 
   },
   {
@@ -73,11 +85,16 @@
     "parseResponses": true,
     "startSubmissionPeriod":0,
     "endSubmissionPeriod":23,
-    "URLParams": {"mergeMode":"", "async": false },
+    "URLParams": {
+      "async": false,
+      "mergeMode": "REPLACE",
+      "importStrategy": "CREATE_AND_UPDATE",
+      "importReportMode": "DEBUG"
+    },
     "suspended":false,
     "IPAddress": "*",
     "JSONResponseXPATH": "",
-    "XMLResponseXPATH": ""
-
+    "XMLResponseXPATH": "",
+    "allowedSources":["localhost"]
   }
 ]

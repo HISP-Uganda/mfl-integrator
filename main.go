@@ -127,6 +127,7 @@ func startAPIServer(wg *sync.WaitGroup) {
 
 		s := new(controllers.ServerController)
 		v2.POST("/servers", s.CreateServer)
+		v2.POST("/importServers", s.ImportServers)
 
 	}
 	// Handle error response when a route is not defined

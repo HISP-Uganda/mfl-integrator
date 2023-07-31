@@ -333,6 +333,13 @@ func FetchFacilities() {
 					OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
 				}
 				facilityRevision.NewOrgUnitRevision()
+				//facilityMetadata, err := GenerateOuMetadataByUID(facility.UID)
+
+				facilityMetadata := models.MetadataOu{}
+				err := json.Unmarshal(facilityJSON, &facilityMetadata)
+				if err != nil {
+					log.WithError(err).Error("Failed to get unmarshal facility into Metadata object")
+				}
 				numberCreated += 1
 			} else {
 				// facility exists
@@ -354,14 +361,17 @@ func FetchFacilities() {
 						"Diff": diffMap, "MetadataPalyload": metadataPayload}).Info(
 						"::::::::: Facility had some changes :::::::::")
 
+					// make a revision
+					//facilityRevision := models.OrgUnitRevision{
+					//	OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
+					//}
+
 					// Generate Metadata Update object
 
 					numberUpdated += 1
 
 				}
-				//facilityRevision := models.OrgUnitRevision{
-				//	OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
-				//}
+
 			}
 		}
 	}
@@ -544,7 +554,7 @@ func SyncLocationsToDHIS2Instances() {
 			//for level := 1; level < 3; level++ {
 			for level := 1; level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; level++ {
 
-				syncOus := GenerateOuMetadata(level)
+				syncOus := GenerateOuMetadataByLevel(level)
 				//for _, ou := range syncOus {
 				//	pp, _ := json.Marshal(ou)
 				//	log.WithFields(log.Fields{"Payload": string(pp), "Server": serverName, "UID": ou.UID, "ID": ou.ID}).Info("DEBUGGGGGGGG")
@@ -553,7 +563,7 @@ func SyncLocationsToDHIS2Instances() {
 				//		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
 				//	}
 				//}
-				ouChunks := lo.Chunk(syncOus, 100)
+				ouChunks := lo.Chunk(syncOus, config.MFLIntegratorConf.API.MFLMetadataBatchSize)
 
 				for _, chunck := range ouChunks {
 					payload := make(map[string][]models.MetadataOu)
@@ -582,7 +592,7 @@ const selectMetaDatOusSQL = `SELECT uid,name, code, shortname,description, path,
 
 // WHERE hierarchylevel = $1 `
 
-func GenerateOuMetadata(level int) []models.MetadataOu {
+func GenerateOuMetadataByLevel(level int) []models.MetadataOu {
 	var ous []models.MetadataOu
 	dbConn := db.GetDB()
 	ouSQL := selectMetaDatOusSQL
@@ -609,6 +619,21 @@ func GenerateOuMetadata(level int) []models.MetadataOu {
 	})
 
 	return ous
+}
+
+func GenerateOuMetadataByUID(uid string) (models.MetadataOu, error) {
+	var ou models.MetadataOu
+	dbConn := db.GetDB()
+	ouSQL := selectMetaDatOusSQL + " WHERE uid = $1"
+
+	err := dbConn.Get(&ou, ouSQL, uid)
+	if err != nil {
+		log.WithError(err).WithField("SQL", ouSQL).Error("Failed to generate Org Unit Metadata")
+		return ou, err
+	}
+	ou.ID = ou.UID
+
+	return ou, nil
 }
 
 func GenerateOuLevelMetadata() []models.MetadataOuLevel {

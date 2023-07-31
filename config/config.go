@@ -97,12 +97,12 @@ type Config struct {
 		MFLDHIS2Password           string `mapstructure:"mfl_dhis2_password"  env:"MFLINTEGRATOR_DHIS2_PASSWORD" env-description:"The MFL base DHIS2  user password"`
 		MFLDHIS2PAT                string `mapstructure:"mfl_dhis2_pat"  env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The MFL base DHIS2  Personal Access Token"`
 		MFLDHIS2TreeIDs            string `mapstructure:"mfl_dhis2_tree_ids"  env:"MFLINTEGRATOR_DHIS2_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level ids"`
-		MFLDHIS2FacilityLevel      int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities"`
+		MFLDHIS2FacilityLevel      int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities" env-default:"5"`
 		MFLCCDHIS2Servers          string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
 		MFLCCDHIS2HierarchyServers string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
 		MFLCCDHIS2CreateServers    string `mapstructure:"mfl_cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`
 		MFLCCDHIS2UpdateServers    string `mapstructure:"mfl_cc_dhis2_update_servers"  env:"MFLINTEGRATOR_CC_DHIS2_UPDATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU updates"`
-		MFLMetadataBatchSize       int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata item to chunk in a metadata request"`
+		MFLMetadataBatchSize       int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata item to chunk in a metadata request" env-default:"50"`
 		Email                      string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
 		AuthToken                  string `mapstructure:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
 		SmsURL                     string `mapstructure:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`

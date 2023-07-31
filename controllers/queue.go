@@ -22,7 +22,8 @@ func (q *QueueController) Queue(c *gin.Context) {
 	// source := c.PostForm("source")
 	// destination := c.PostForm("destination")
 	contentType := c.Request.Header.Get("Content-Type")
-	req, err := models.NewRequest(c, db)
+	// req, err := models.NewRequest(c, db)
+	req, err := models.NewRequestFromPOST(c, db)
 	if err != nil {
 		log.WithError(err).Error("Failed to add request to queue")
 		c.String(http.StatusBadGateway, "Failed to add request to queue")
