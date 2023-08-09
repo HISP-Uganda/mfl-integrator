@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
+	jsonpatch "github.com/evanphx/json-patch"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"math"
@@ -20,6 +21,20 @@ import (
 	"strings"
 	"time"
 )
+
+func PatchJSONObject(originalJSON, patchJSON []byte) []byte {
+	patch, err := jsonpatch.DecodePatch(patchJSON)
+	if err != nil {
+		return originalJSON
+	}
+
+	modified, err := patch.Apply(originalJSON)
+	if err != nil {
+		return originalJSON
+	}
+	return modified
+
+}
 
 // GetDefaultEnv Returns default value passed if env variable not defined
 func GetDefaultEnv(key, fallback string) string {

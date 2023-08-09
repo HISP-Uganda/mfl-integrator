@@ -9,6 +9,9 @@ import (
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
@@ -23,6 +26,19 @@ import (
 )
 
 func init() {
+	m, err := migrate.New(
+		"file://db/migrations",
+		config.MFLIntegratorConf.Database.URI)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Fatal("Error running migration:", err)
+	}
+
+	if err != nil {
+		log.Fatalln(err)
+	}
 	CreateBaseDHIS2Server()
 	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
 
@@ -463,7 +479,13 @@ func CreateBaseDHIS2Server() {
 	metadataServer.s.StartOfSubmissionPeriod = 0
 	metadataServer.s.EndOfSubmissionPeriod = 23
 
-	serverList := []Server{*metadataServer}
+	ouGroupAddServer := *metadataServer
+	ouGroupAddServer.s.Name = "base_OU_GroupAdd"
+	ouGroupAddServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/organisationUnitGroups"
+	ouGroupAddServer.s.EndPointType = "OU_ORGUNIT_GROUP_ADD"
+	ouGroupAddServer.s.URLParams = make(dbutils.MapAnything)
+
+	serverList := []Server{*metadataServer, ouGroupAddServer}
 	summary, err := CreateServers(db.GetDB(), serverList)
 	if err != nil {
 		log.WithError(err).Error("Failed to create base DHIS server in dispatcher")

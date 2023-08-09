@@ -305,3 +305,48 @@ type RequestForm struct {
 	SubmissionID      string    `db:"submissionid" json:"submissionId,omitempty"`             // a reference ID is source system
 	URLSuffix         string    `db:"url_suffix" json:"urlSuffix,omitempty"`
 }
+
+func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
+	req := &Request{}
+	r := &req.r
+
+	r.Source = int(GetServerIDByName(rq.Source))
+	r.Destination = int(GetServerIDByName(rq.Destination))
+	if r.Source == 0 {
+		return *req, errors.New(fmt.Sprintf("Source server %s not found!", rq.Source))
+	}
+	if r.Destination == 0 {
+		return *req, errors.New(fmt.Sprintf("Destination server %s not found!", rq.Destination))
+
+	}
+	ccServers := lo.Map(rq.CCServers, func(name string, _ int) int64 {
+		return GetServerIDByName(name)
+	})
+	r.CCServers = ccServers
+	r.UID = utils.GetUID()
+	r.ContentType = rq.ContentType
+	r.SubmissionID = rq.SubmissionID
+	r.BatchID = rq.BatchID
+	r.Period = rq.Period
+	r.Week = rq.Week
+	r.Month = rq.Month
+	r.Year = rq.Year
+	r.MSISDN = rq.MSISDN
+	r.Facility = rq.Facility
+	r.RawMsg = rq.RawMsg
+	r.URLSuffix = rq.URLSuffix
+	if rq.BodyIsQueryParams {
+		r.BodyIsQueryParams = true
+	}
+	r.ReportType = rq.ReportType
+	r.ObjectType = rq.ObjectType
+	r.Errors = rq.Extras
+	r.District = rq.District
+	r.Body = rq.Body
+
+	_, err := db.NamedExec(insertRequestSQL, r)
+	if err != nil {
+		log.WithError(err).Error("Error INSERTING Request")
+	}
+	return *req, nil
+}

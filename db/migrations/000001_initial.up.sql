@@ -428,15 +428,18 @@ CREATE OR REPLACE FUNCTION geometry_geojson(geom geometry, lvl INT) RETURNS JSON
                     ELSE
                         CASE
                             WHEN lvl = 1 THEN
-                                '{"type": "Polygon", "coordinates": []}'::JSON
+                                NULL::JSON
                             WHEN lvl = 2 THEN
-                                '{"type": "Polygon", "coordinates": []}'::JSON
+                                NULL::JSON
                             WHEN lvl = 3 THEN
-                                '{"type": "Polygon", "coordinates": []}'::JSON
+                                -- '{"type": "Polygon", "coordinates": []}'::JSON
+                                NULL::JSON
                             WHEN lvl = 4 THEN
-                                '{"type": "MultiPolygon", "coordinates": []}'::JSON
+                                -- '{"type": "MultiPolygon", "coordinates": []}'::JSON
+                                NULL::JSON
                             WHEN lvl = 5 THEN
-                                '{"type": "Point", "coordinates": []}'::JSON
+                                -- '{"type": "Point", "coordinates": []}'::JSON
+                                NULL::JSON
                         END
                 END
         INTO ret;

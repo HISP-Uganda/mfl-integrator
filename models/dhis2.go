@@ -98,7 +98,7 @@ type Response struct {
 // ImportSummary for Aggregate and Async Requests
 type ImportSummary struct {
 	HTTPStatus     string `json:"httpStatus"`
-	HTTPStatusCode string `json:"httpStatusCode"`
+	HTTPStatusCode int    `json:"httpStatusCode"`
 	Response       Response
 	Status         string
 	Message        string

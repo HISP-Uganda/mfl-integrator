@@ -55,7 +55,7 @@ type RequestObj struct {
 	ContentType        string               `db:"ctype"`
 	ObjectType         string               `db:"object_type"`
 	BodyIsQueryParams  bool                 `db:"body_is_query_param"`
-	SubmissionID       int64                `db:"submissionid"`
+	SubmissionID       string               `db:"submissionid"`
 	URLSurffix         string               `db:"url_suffix"`
 	Suspended          bool                 `db:"suspended"`
 	Status             models.RequestStatus `db:"status"`
@@ -77,7 +77,7 @@ func (r *RequestObj) updateRequest(tx *sqlx.Tx) {
 	if err != nil {
 		log.WithError(err).Error("Error updating request status")
 	}
-	_ = tx.Commit()
+	// _ = db.Commit()
 }
 
 // updateCCServerStatus updates the status for CC servers on the request
@@ -102,6 +102,9 @@ func (r *RequestObj) withStatus(s models.RequestStatus) *RequestObj { r.Status =
 // canSendRequest checks if a queued request is eligible for sending
 // based on constraints on request and the receiving servers
 func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInCC bool) bool {
+	if !config.MFLIntegratorConf.Server.SyncOn {
+		return false // helps to globally turn off sync and debug
+	}
 	if !serverInCC {
 		// check if we have exceeded retries
 		if r.Retries > config.MFLIntegratorConf.Server.MaxRetries {
@@ -410,7 +413,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup) {
 			"request-ID": req}).Info("Handling Request")
 		/* Work on the request */
 		// dest = utils.GetServer(reqObj.Destination)
-		log.WithFields(log.Fields{"servers": models.ServerMap}).Info("Servers")
+		// log.WithFields(log.Fields{"servers": models.ServerMap}).Info("Servers")
 		if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
 			_ = ProcessRequest(tx, reqObj, reqDestination, false)
 		} else {
@@ -451,9 +454,16 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 
 		if !destination.UseAsync() {
 			result := models.ImportSummary{}
-			err := json.NewDecoder(resp.Body).Decode(&result)
+			respBody, _ := io.ReadAll(resp.Body)
+			err := json.Unmarshal(respBody, &result)
+			// err := json.NewDecoder(resp.Body).Decode(&result)
 			if err != nil {
-				log.WithError(err).Error("Failed to decode import summary")
+				reqObj.Status = models.RequestStatusFailed
+				reqObj.StatusCode = "ERROR03"
+				reqObj.Errors = "Failed to decode import summary"
+				reqObj.Retries += 1
+				reqObj.updateRequest(tx)
+				log.WithField("Resp", string(respBody)).WithError(err).Error("Failed to decode import summary")
 				return err
 			}
 			if resp.StatusCode/100 == 2 {
@@ -465,6 +475,10 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					"conflicts":   result.Response.Conflicts,
 				}).Info("Request completed successfully!")
 				return nil
+			} else {
+				reqObj.withStatus(models.RequestStatusFailed).updateRequestStatus(tx)
+				log.WithFields(log.Fields{"Request": reqObj.Body, "Response": string(respBody)}).Warn("A non 200 response")
+
 			}
 		} else {
 			// var result map[string]interface{}

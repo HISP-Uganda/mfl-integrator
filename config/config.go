@@ -80,6 +80,7 @@ type Config struct {
 		StartOfSubmissionPeriod string `mapstructure:"start_submission_period" env:"START_SUBMISSION_PERIOD" env-default:"18"`
 		EndOfSubmissionPeriod   string `mapstructure:"end_submission_period" env:"END_SUBMISSION_PERIOD" env-default:"24"`
 		MaxConcurrent           int    `mapstructure:"max_concurrent" env:"MFLINTEGRATOR_MAX_CONCURRENT" env-default:"5"`
+		SyncOn                  bool   `mapstructure:"sync_on" env:"MFLINTEGRATOR_SYNC_ON" env-default:"true"`
 		RequestProcessInterval  int    `mapstructure:"request_process_interval" env:"REQUEST_PROCESS_INTERVAL" env-default:"4"`
 		LogDirectory            string `mapstructure:"logdir" env:"MFLINTEGRATOR_LOGDIR" env-default:"/var/log/dispatcher2"`
 		UseSSL                  string `mapstructure:"use_ssl" env:"MFLINTEGRATOR_USE_SSL" env-default:"true"`
@@ -89,22 +90,22 @@ type Config struct {
 	} `yaml:"server"`
 
 	API struct {
-		MFLBaseURL                 string `mapstructure:"mfl_base_url" env:"MFLINTEGRATOR_BASE_URL" env-description:"The MFL base API URL"`
-		MFLUser                    string `mapstructure:"mfl_user"  env:"MFLINTEGRATOR_USER" env-description:"The MFL API username"`
-		MFLPassword                string `mapstructure:"mfl_password"  env:"MFLINTEGRATOR_PASSWORD" env-description:"The MFL API user password"`
-		MFLDHIS2BaseURL            string `mapstructure:"mfl_dhis2_base_url" env:"MFLINTEGRATOR_DHIS2_BASE_URL" env-description:"The MFL base DHIS2  base API URL"`
-		MFLDHIS2User               string `mapstructure:"mfl_dhis2_user"  env:"MFLINTEGRATOR_DHIS2_USER" env-description:"The MFL base DHIS2 username"`
-		MFLDHIS2Password           string `mapstructure:"mfl_dhis2_password"  env:"MFLINTEGRATOR_DHIS2_PASSWORD" env-description:"The MFL base DHIS2  user password"`
-		MFLDHIS2PAT                string `mapstructure:"mfl_dhis2_pat"  env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The MFL base DHIS2  Personal Access Token"`
-		MFLDHIS2TreeIDs            string `mapstructure:"mfl_dhis2_tree_ids"  env:"MFLINTEGRATOR_DHIS2_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level ids"`
-		MFLDHIS2FacilityLevel      int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities" env-default:"5"`
-		MFLCCDHIS2Servers          string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
-		MFLCCDHIS2HierarchyServers string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
-		MFLCCDHIS2CreateServers    string `mapstructure:"mfl_cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`
-		MFLCCDHIS2UpdateServers    string `mapstructure:"mfl_cc_dhis2_update_servers"  env:"MFLINTEGRATOR_CC_DHIS2_UPDATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU updates"`
-		MFLMetadataBatchSize       int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata item to chunk in a metadata request" env-default:"50"`
-		Email                      string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
-		AuthToken                  string `mapstructure:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
-		SmsURL                     string `mapstructure:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`
+		MFLBaseURL                  string `mapstructure:"mfl_base_url" env:"MFLINTEGRATOR_BASE_URL" env-description:"The MFL base API URL"`
+		MFLUser                     string `mapstructure:"mfl_user"  env:"MFLINTEGRATOR_USER" env-description:"The MFL API username"`
+		MFLPassword                 string `mapstructure:"mfl_password"  env:"MFLINTEGRATOR_PASSWORD" env-description:"The MFL API user password"`
+		MFLDHIS2BaseURL             string `mapstructure:"mfl_dhis2_base_url" env:"MFLINTEGRATOR_DHIS2_BASE_URL" env-description:"The MFL base DHIS2  base API URL"`
+		MFLDHIS2User                string `mapstructure:"mfl_dhis2_user"  env:"MFLINTEGRATOR_DHIS2_USER" env-description:"The MFL base DHIS2 username"`
+		MFLDHIS2Password            string `mapstructure:"mfl_dhis2_password"  env:"MFLINTEGRATOR_DHIS2_PASSWORD" env-description:"The MFL base DHIS2  user password"`
+		MFLDHIS2PAT                 string `mapstructure:"mfl_dhis2_pat"  env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The MFL base DHIS2  Personal Access Token"`
+		MFLDHIS2TreeIDs             string `mapstructure:"mfl_dhis2_tree_ids"  env:"MFLINTEGRATOR_DHIS2_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level ids"`
+		MFLDHIS2FacilityLevel       int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities" env-default:"5"`
+		MFLCCDHIS2Servers           string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
+		MFLCCDHIS2HierarchyServers  string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
+		MFLCCDHIS2CreateServers     string `mapstructure:"mfl_cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`
+		MFLCCDHIS2OuGroupAddServers string `mapstructure:"mfl_cc_dhis2_ougroup_add_servers"  env:"MFLINTEGRATOR_CC_DHIS2_OUGROUP_ADD_SERVERS" env-description:"The MFL CC DHIS2 instances APIs used to add ous to groups"`
+		MFLMetadataBatchSize        int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata item to chunk in a metadata request" env-default:"50"`
+		Email                       string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
+		AuthToken                   string `mapstructure:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
+		SmsURL                      string `mapstructure:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`
 	} `yaml:"api"`
 }

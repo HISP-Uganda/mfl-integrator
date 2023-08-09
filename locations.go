@@ -328,7 +328,7 @@ func FetchFacilities() {
 				// Track the versions
 				var fj dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
-				fj["parent"] = facility.Parent()
+				fj["parent"] = facility.ParentByUID()
 				facilityRevision := models.OrgUnitRevision{
 					OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
 				}
@@ -336,11 +336,66 @@ func FetchFacilities() {
 				//facilityMetadata, err := GenerateOuMetadataByUID(facility.UID)
 
 				facilityMetadata := models.MetadataOu{}
+				facilityMetadata.Parent = facility.ParentByUID()
+
 				err := json.Unmarshal(facilityJSON, &facilityMetadata)
 				if err != nil {
-					log.WithError(err).Error("Failed to get unmarshal facility into Metadata object")
+					log.WithError(err).Error("Failed to unmarshal facility into Metadata object")
 				}
 				numberCreated += 1
+				// Create Dispatcher2 request
+				// remove name and uid in organisationUnitGroups sent as part of metadata
+				facilityMetadata.OrganisationUnitGroups = lo.Map(
+					facilityMetadata.OrganisationUnitGroups, func(item dbutils.Map, _ int) dbutils.Map {
+						delete(item.Map(), "uid")
+						delete(item.Map(), "name")
+						return item
+					})
+
+				var ouM []models.MetadataOu
+				payload := make(map[string][]models.MetadataOu)
+				ouM = append(ouM, facilityMetadata)
+				payload["organisationUnits"] = ouM
+				reqBody, err := json.Marshal(payload)
+				if facilityMetadata.Geometry.Get("type", "") == "" {
+					reqBody = utils.PatchJSONObject(reqBody, []byte(
+						`[
+							{"op": "remove", "path": "/organisationUnits/0/geometry"},
+							{"op": "remove", "path": "/organisationUnits/0/organisationUnitGroups"}
+						]`))
+				}
+
+				if err != nil {
+					log.WithError(err).Error("Failed to marshal facility metadata")
+				}
+				year, week := time.Now().ISOWeek()
+				reqF := models.RequestForm{
+					Source: "localhost", Destination: "base_OU", ContentType: "application/json",
+					Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
+					Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: "", BatchID: "", SubmissionID: "",
+					CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2CreateServers, ","),
+					Body:      string(reqBody),
+				}
+				fRequests, err := reqF.Save(dbConn)
+				if err != nil {
+					log.WithError(err).Error("Failed to queue facility creation")
+				}
+				log.WithField("Facility", fRequests.UID()).Info("Queued Facility for addition")
+
+				// Now create requests to add orgunit to the right orgunit groups
+				ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+				requestForms := MakeOrgunitGroupsAdditionRequests(ouGroupRequests)
+				for _, rForm := range requestForms {
+					_, err := rForm.Save(dbConn)
+					if err != nil {
+						log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
+							"Failed to queue request to add OU to OUGroup")
+						continue
+					}
+					log.WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Info(
+						"Queued Request to add facility to group!")
+				}
+
 			} else {
 				// facility exists
 				var fj dbutils.MapAnything
@@ -433,6 +488,9 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	lat := location.Resource.Position.Latitude
 	long := location.Resource.Position.Longitude
 	coordinates := []json.Number{lat, long}
+	if lat.String() == "0.0" && long.String() == "0.0" {
+		coordinates = []json.Number{}
+	}
 	// var point dbutils.JSON
 	coordinateBytes, err := json.Marshal(coordinates)
 	if err != nil {
@@ -472,7 +530,11 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	facility.PhoneNumber = phone
 	facility.Email = email
 	facility.Extras = extensions
-	facility.Geometry = models.Geometry{Type: "Point", Coordinates: coordinateBytes}
+
+	if lat.String() != "0.0" && long.String() != "0.0" {
+		facility.Geometry = models.Geometry{Type: "Point", Coordinates: coordinateBytes}
+	}
+
 	ouUID := models.GetOuGroupUIDByName(levelOfCare)
 	facility.OrgUnitGroups = []models.OrgUnitGroup{
 		{Name: levelOfCare, UID: ouUID, ID: ouUID},
@@ -636,6 +698,7 @@ func GenerateOuMetadataByUID(uid string) (models.MetadataOu, error) {
 	return ou, nil
 }
 
+// GenerateOuLevelMetadata ...
 func GenerateOuLevelMetadata() []models.MetadataOuLevel {
 	var ouLevels []models.MetadataOuLevel
 	dbConn := db.GetDB()
@@ -649,6 +712,7 @@ func GenerateOuLevelMetadata() []models.MetadataOuLevel {
 	return ouLevels
 }
 
+// GenerateOuGroupsMetadata ...
 func GenerateOuGroupsMetadata() []models.MetadataOuGroup {
 	var ouGroups []models.MetadataOuGroup
 	dbConn := db.GetDB()
@@ -661,6 +725,7 @@ func GenerateOuGroupsMetadata() []models.MetadataOuGroup {
 	return ouGroups
 }
 
+// sendMetadata .....
 func sendMetadata(server models.Server, data interface{}) []byte {
 	mURL := server.CompleteURL()
 	log.WithField("URL", mURL).Info("MetaDataURL")
@@ -697,4 +762,36 @@ func sendMetadata(server models.Server, data interface{}) []byte {
 		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
 	}
 	return rBody
+}
+
+// CreateOrgUnitGroupPayload ...
+func CreateOrgUnitGroupPayload(ou models.MetadataOu) map[string][]byte {
+	ouGroupReqs := make(map[string][]byte)
+	if len(ou.OrganisationUnitGroups) > 0 {
+		for _, g := range ou.OrganisationUnitGroups {
+			groupId := g.Get("id", "")
+			ouGroupReqs[groupId.(string)] = []byte(fmt.Sprintf(
+				`[{"op": "add", "path": "/organisationUniuts/-", "value": {"id", "%s"}}]`, ou.UID))
+		}
+
+	}
+	return ouGroupReqs
+}
+
+// MakeOrgunitGroupsAdditionRequests ....
+func MakeOrgunitGroupsAdditionRequests(ouGroupPayloads map[string][]byte) []models.RequestForm {
+	requests := make([]models.RequestForm, len(ouGroupPayloads))
+	for k, v := range ouGroupPayloads {
+		year, week := time.Now().ISOWeek()
+		reqF := models.RequestForm{
+			Source: "localhost", Destination: "base_OU_GroupAdd", ContentType: "application/json",
+			Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
+			Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: "", BatchID: "", SubmissionID: "",
+			CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2OuGroupAddServers, ","),
+			URLSuffix: fmt.Sprintf("/%s", k),
+			Body:      string(v),
+		}
+		requests = append(requests, reqF)
+	}
+	return requests
 }

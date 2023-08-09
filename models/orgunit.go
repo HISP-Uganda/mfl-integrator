@@ -213,6 +213,23 @@ func (o *OrganisationUnit) ParentByParentId() map[string]string {
 
 }
 
+func (o *OrganisationUnit) ParentByUID() dbutils.Map {
+	dbConn := db.GetDB()
+	parentUID := ""
+	var parentMap dbutils.Map
+	if o.ValidateUID() {
+		err := dbConn.Get(&parentUID, `SELECT uid FROM organisationunit WHERE id = 
+            (SELECT parentid FROM organisationunit WHERE uid = $1)`, o.UID)
+		if err != nil {
+			log.WithField("UID", o.UID).WithError(err).Error("Could not get parent ID")
+			return parentMap
+		}
+		parentMap.Map()["id"] = parentUID
+	}
+	return parentMap
+
+}
+
 func (o *OrganisationUnit) GetGroups() []OrgUnitGroup {
 	dbConn := db.GetDB()
 	ouGroups := []OrgUnitGroup{}
