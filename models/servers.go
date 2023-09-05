@@ -8,6 +8,7 @@ import (
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
+	"github.com/buger/jsonparser"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -46,6 +47,7 @@ func init() {
 		log.WithError(err).Info("Failed to load servers")
 	}
 	ServerMap = make(map[string]Server)
+	ServerMapByName = make(map[string]Server)
 	for rows.Next() {
 		srv := &Server{}
 
@@ -55,6 +57,7 @@ func init() {
 		}
 		// fmt.Printf("=>>>>>>%#v", s)
 		ServerMap[strconv.Itoa(int(srv.s.ID))] = *srv
+		ServerMapByName[srv.s.Name] = *srv
 
 	}
 	_ = rows.Close()
@@ -62,6 +65,7 @@ func init() {
 
 // ServerMap is the List of Servers
 var ServerMap map[string]Server
+var ServerMapByName map[string]Server
 
 // ServerID is the id for the server
 type ServerID int64
@@ -118,7 +122,7 @@ func (sa *ServerAllowedApps) Save() {
 	}
 }
 
-// ID return the id of this request
+// ID return the id of this server
 func (s *Server) ID() ServerID { return s.s.ID }
 
 // UID returns the uid of the server/app
@@ -191,17 +195,17 @@ func (s *Server) CompleteURL() string {
 }
 
 // GetServerByID returns server object using id
-func GetServerByID(id int64) Server {
-	srv := Server{}
-	err := db.GetDB().Get(&srv.s, "SELECT * FROM servers WHERE id = $1", id)
-
-	if err != nil {
-		fmt.Printf("Error geting server: [%v]", err)
-		return Server{}
-	}
-	return srv
-
-}
+//func GetServerByID(id int64) Server {
+//	srv := Server{}
+//	err := db.GetDB().Get(&srv.s, "SELECT * FROM servers WHERE id = $1", id)
+//
+//	if err != nil {
+//		fmt.Printf("Error geting server: [%v]", err)
+//		return Server{}
+//	}
+//	return srv
+//
+//}
 
 // GetServerByName returns server object using id
 func GetServerByName(name string) (Server, error) {
@@ -243,7 +247,7 @@ func GetServerIDByName(name string) int64 {
 	err := db.GetDB().Get(&id, "SELECT id FROM servers WHERE name = $1", name)
 
 	if err != nil {
-		fmt.Printf("Error geting server: [%v]", err)
+		fmt.Printf("Error geting server: Name: %v [%v]", name, err)
 		return 0
 	}
 	return id
@@ -343,10 +347,10 @@ func GetServers(db *sqlx.DB, page string, pageSize string,
 }
 
 const insertServerSQL = `
-INSERT INTO servers(uid, name, username, password, url, ipaddress, auth_method, auth_token,
+INSERT INTO servers(uid, name, username, password, url, ipaddress, http_method, auth_method, auth_token,
        callback_url, allow_callbacks, cc_urls, allow_copies, start_submission_period, end_submission_period,
        parse_responses, use_ssl, suspended, ssl_client_certkey_file, json_response_xpath, xml_response_xpath, endpoint_type, url_params)
-       VALUES (:uid,:name,:username,:password,:url,:ipaddress,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
+       VALUES (:uid,:name,:username,:password,:url,:ipaddress,:http_method,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
                :cc_urls,:allow_copies,:start_submission_period,:end_submission_period,:parse_responses,:use_ssl,
                :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type, :url_params)
 	RETURNING id
@@ -373,8 +377,61 @@ func NewServer(c *gin.Context, db *sqlx.DB) (Server, error) {
 	}
 	if srv.ExistsInDB() {
 		log.WithField("Server Name", srv.s.Name).Info("Server with same name already exists!")
-		return *srv, errors.New(fmt.Sprintf("Server with name %s already exists!", srv.s.Name))
+		srv.s.UID = GetServerUIDByName(srv.Name())
+		_, err := db.NamedExec(updateServerSQL, srv.s)
+		if err != nil {
+			log.WithError(err).Error("Failed to update server!")
+			return *srv, err
+		}
+		return *srv, nil
 	} else {
+		rows, err := db.NamedQuery(insertServerSQL, srv.s)
+		if err != nil {
+			log.WithError(err).Error("Failed to save server to database")
+			return Server{}, err
+		}
+		for rows.Next() {
+			var serverId int64
+			_ = rows.Scan(&serverId)
+			if len(srv.s.AllowedSources) > 0 {
+				servers := lo.Map(srv.s.AllowedSources, func(name string, _ int) int64 {
+					iSrv := ServerMapByName[name]
+					return int64(iSrv.ID())
+				})
+				allowedSources := ServerAllowedApps{ServerID: serverId, AllowedServers: servers}
+				allowedSources.Save()
+
+			}
+
+		}
+		_ = rows.Close()
+	}
+
+	return *srv, nil
+}
+
+func CreateServerFromJSON(db *sqlx.DB, serverJSON []byte) (Server, error) {
+	srv := &Server{}
+	err := json.Unmarshal(serverJSON, &srv.s)
+	if err != nil {
+		log.WithError(err).Error("Failed to Unmarshal serverJSON to Server object!")
+		return Server{}, err
+	}
+
+	if srv.ExistsInDB() {
+		log.WithField("Server Name", srv.s.Name).Info("Server with same name already exists!")
+		// Update server
+		srv.s.UID = GetServerUIDByName(srv.Name())
+		_, err := db.NamedExec(updateServerSQL, srv.s)
+		if err != nil {
+			log.WithError(err).Error("Failed to update server!")
+			return *srv, err
+		}
+		log.WithField("ServerUID", srv.s.UID).Info("Updating server!")
+		return *srv, nil
+	} else {
+		// create server
+		srv.SetUID(utils.GetUID())
 		rows, err := db.NamedQuery(insertServerSQL, srv.s)
 		if err != nil {
 			log.WithError(err).Error("Failed to save server to database")
@@ -400,10 +457,10 @@ func NewServer(c *gin.Context, db *sqlx.DB) (Server, error) {
 }
 
 const updateServerSQL = `
-UPDATE servers SET (name, username, password, url, ipaddress, auth_method, auth_token,
+UPDATE servers SET (name, username, password, url, ipaddress, http_method,auth_method, auth_token,
        callback_url, allow_callbacks, cc_urls, allow_copies, start_submission_period, end_submission_period,
        parse_responses, use_ssl, suspended, ssl_client_certkey_file, json_response_xpath, xml_response_xpath, endpoint_type, url_params)
-	= (:name,:username,:password,:url,:ipaddress,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
+	= (:name,:username,:password,:url,:ipaddress,:http_method,:auth_method,:auth_token, :callback_url,:allow_callbacks, 
                :cc_urls,:allow_copies,:start_submission_period,:end_submission_period,:parse_responses,:use_ssl,
                :suspended,:ssl_client_certkey_file,:json_response_xpath,:xml_response_xpath, :endpoint_type, :url_params)
 	WHERE uid = :uid
@@ -439,7 +496,8 @@ func CreateServers(db *sqlx.DB, servers []Server) (dbutils.MapAnything, error) {
 				_ = rows.Scan(&serverId)
 				if len(server.s.AllowedSources) > 0 {
 					servers := lo.Map(server.s.AllowedSources, func(name string, _ int) int64 {
-						return GetServerIDByName(name)
+						iSrv := ServerMapByName[name]
+						return int64(iSrv.ID())
 					})
 					allowedSources := ServerAllowedApps{ServerID: serverId, AllowedServers: servers}
 					allowedSources.Save()
@@ -481,6 +539,7 @@ func CreateBaseDHIS2Server() {
 
 	ouGroupAddServer := *metadataServer
 	ouGroupAddServer.s.Name = "base_OU_GroupAdd"
+	ouGroupAddServer.s.HTTPMethod = "PATCH"
 	ouGroupAddServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/organisationUnitGroups"
 	ouGroupAddServer.s.EndPointType = "OU_ORGUNIT_GROUP_ADD"
 	ouGroupAddServer.s.URLParams = make(dbutils.MapAnything)
@@ -491,4 +550,113 @@ func CreateBaseDHIS2Server() {
 		log.WithError(err).Error("Failed to create base DHIS server in dispatcher")
 	}
 	log.WithFields(log.Fields{"Server": metadataServer.UID(), "Summary": summary}).Info("Server Creation Summary")
+}
+
+func SyncLocationsToServer(serverName string) {
+	// Servers in this config can receive the base DHIS2 organisation unit hierarchy
+	log.WithField("CCDHIS2", serverName).Info("CC Hierarchy Servers")
+	server, err := GetServerByName(serverName)
+	if err != nil {
+		log.WithError(err).Info("Could not proceed to CC hierarchy to server")
+	}
+	// check if we already have ous in the instance and only create if none present
+	ouURL := server.URL()
+	baseDHIS2URL, err := utils.GetDHIS2BaseURL(ouURL)
+	if err != nil {
+		log.WithError(err).Info("CAUTION DHIS2 API URL should have /api/ part")
+		return
+	}
+	p := url.Values{}
+	p.Add("fields", "id,name")
+	p.Add("paging", "true")
+	p.Add("pageSize", "1")
+	p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel-1))
+	chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?"
+	//if strings.LastIndex(ouURL, "?") == len(ouURL)-1 {
+	//	ouURL += p.Encode()
+	//} else {
+	//	ouURL += "?" + p.Encode()
+	//}
+	chekOusURL += p.Encode()
+	log.WithFields(log.Fields{"ServerURL": chekOusURL, "Name": server.Name()}).Info("Trying to send hierarchy to server")
+
+	var respBody []byte
+	switch server.AuthMethod() {
+	case "Basic":
+		resp, err := utils.GetWithBasicAuth(chekOusURL, server.Username(), server.Password())
+		respBody = resp
+		if err != nil {
+			log.WithError(err).Error("Failed to get ous from server")
+			return
+		}
+
+	case "Token":
+		resp, err := utils.GetWithToken(chekOusURL, server.AuthToken())
+		respBody = resp
+		if err != nil {
+			log.WithError(err).Error("Failed to get ous from server")
+			return
+		}
+	default:
+		// pass
+	}
+	if respBody != nil {
+		v, _, _, err := jsonparser.Get(respBody, "pager", "total")
+		if err != nil {
+			log.WithError(err).Error("json parser failed to get pager.total key")
+		}
+		if string(v) != "0" && !*config.ForceSync {
+
+			log.WithField("ForceSync", *config.ForceSync).Info("FORCE SYNC >>>>>>>>>>")
+			return // we have ous already
+		}
+		log.WithField("Server", serverName).Info("We can now sync the hierarchy!!")
+		//Send Ou Levels
+		syncOuLevels := GenerateOuLevelMetadata()
+		levelsPayload := make(map[string][]MetadataOuLevel)
+		levelsPayload["organisationUnitLevels"] = syncOuLevels
+		SendMetadata(server, levelsPayload)
+
+		// send Ou Groups
+		syncOuGroups := GenerateOuGroupsMetadata()
+		groupsPayload := make(map[string][]MetadataOuGroup)
+		groupsPayload["organisationUnitGroups"] = syncOuGroups
+		SendMetadata(server, groupsPayload)
+
+		// Send Ous
+		// for level := 1; level < 3; level++ {
+		for level := 1; level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; level++ {
+
+			syncOus := GenerateOuMetadataByLevel(level)
+			//for _, ou := range syncOus {
+			//	pp, _ := json.Marshal(ou)
+			//	log.WithFields(log.Fields{"Payload": string(pp), "Server": serverName, "UID": ou.UID, "ID": ou.ID}).Info("DEBUGGGGGGGG")
+			//	rBody := sendMetadata(server, ou)
+			//	if rBody != nil {
+			//		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+			//	}
+			//}
+			ouChunks := lo.Chunk(syncOus, config.MFLIntegratorConf.API.MFLMetadataBatchSize)
+			// ouChunks := lo.Chunk(syncOus, 1)
+
+			for _, chunck := range ouChunks {
+				payload := make(map[string][]MetadataOu)
+				payload["organisationUnits"] = chunck
+				log.WithFields(log.Fields{"Parant": chunck[0].Parent, "Name": chunck[0].Name, "Level": chunck[0].Level}).Info("OUDATA =>>>>>>>>")
+
+				rBody := SendMetadata(server, payload)
+				if rBody != nil {
+					log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+				}
+				if level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel-1 {
+					time.Sleep(5 * time.Second) // give a longer time to ensure creation on the other side
+				} else {
+					time.Sleep(3 * time.Second)
+				}
+
+			}
+
+		}
+
+	}
 }

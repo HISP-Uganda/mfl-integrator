@@ -7,6 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 	"net/http"
+	"strconv"
 )
 
 type ServerController struct{}
@@ -22,6 +23,8 @@ func (s *ServerController) CreateServer(c *gin.Context) {
 		})
 		return
 	}
+	models.ServerMap[strconv.Itoa(int(srv.ID()))] = srv
+	models.ServerMapByName[srv.Name()] = srv
 
 	c.JSON(http.StatusOK, srv.Self())
 }

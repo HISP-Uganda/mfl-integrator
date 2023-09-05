@@ -47,7 +47,11 @@ func LoadOuLevels() {
 			return
 		}
 		// fmt.Println(string(resp))
-		v, _, _, _ := jsonparser.Get(resp, "organisationUnitLevels")
+		v, _, _, err := jsonparser.Get(resp, "organisationUnitLevels")
+		if err != nil {
+			log.WithError(err).Error("No organisationUnitLevels found by json parser")
+			return
+		}
 		// fmt.Printf("Entries: %s", v)
 		var ouLevels []models.OrgUnitLevel
 		err = json.Unmarshal(v, &ouLevels)
@@ -91,7 +95,11 @@ func LoadOuGroups() {
 			log.WithError(err).Info("Failed to fetch organisation unit groups")
 			return
 		}
-		v, _, _, _ := jsonparser.Get(resp, "organisationUnitGroups")
+		v, _, _, err := jsonparser.Get(resp, "organisationUnitGroups")
+		if err != nil {
+			log.WithError(err).Error("json parser failed to get organisationUnitGroups key")
+			return
+		}
 		var ouGroups []models.OrgUnitGroup
 		err = json.Unmarshal(v, &ouGroups)
 		if err != nil {
@@ -142,7 +150,11 @@ func LoadLocations() {
 				return
 			}
 
-			v, _, _, _ := jsonparser.Get(resp, "organisationUnits")
+			v, _, _, err := jsonparser.Get(resp, "organisationUnits")
+			if err != nil {
+				log.WithError(err).Error("json parser failed to get organisationUnit key")
+				return
+			}
 			var ous []models.OrganisationUnit
 			err = json.Unmarshal(v, &ous)
 			if err != nil {
@@ -195,9 +207,13 @@ func MatchLocationsWithMFL() {
 			log.WithError(err).Info("Matching Process 001: Failed to fetch locations from MFL")
 		}
 		if resp != nil {
-			v, _, _, _ := jsonparser.Get(resp, "entry")
+			v, _, _, err := jsonparser.Get(resp, "entry")
+			if err != nil {
+				log.WithError(err).Error("json parser failed to get entry key")
+				continue
+			}
 			var entries []LocationEntry
-			err := json.Unmarshal(v, &entries)
+			err = json.Unmarshal(v, &entries)
 			if err != nil {
 				log.WithError(err).Info("Matching Process 002: Error unmarshaling response body")
 				fmt.Println(string(resp))
@@ -253,7 +269,7 @@ func MatchLocationsWithMFL() {
 }
 
 // FetchFacilities pulls facilities from the MFL after loading and matching
-func FetchFacilities() {
+func FetchFacilities(mflId string) {
 	dbConn := db.GetDB()
 	var upperLevels int64
 	err := dbConn.Get(&upperLevels, "SELECT count(*) FROM organisationunit WHERE hierarchylevel = $1 - 1",
@@ -277,20 +293,30 @@ func FetchFacilities() {
 	params := url.Values{}
 	params.Add("resource", "Location")
 	params.Add("type", "healthFacility")
+	if len(mflId) > 0 {
+		params.Add("facilityLocalGovernment", mflId)
+	}
 	params.Add("_count", "30000")
 	if facilityCount == 0 {
 		//None exist so far
 		apiURL += "?" + params.Encode()
 	} else {
 		// Some facilities exist
-		params.Add("_lastUpdated", fmt.Sprintf("gt2023-07-01"))
+		lastSyncDate := models.GetLastSyncDate(mflId)
+		if len(lastSyncDate) > 0 {
+			params.Add("_lastUpdated", fmt.Sprintf("gt%s", lastSyncDate))
+
+		} else {
+			params.Add("_lastUpdated", fmt.Sprintf("gt2023-01-01"))
+		}
 		apiURL += "?" + params.Encode()
 	}
 	log.WithField("URL", apiURL).Info("Facility URL")
-	startTime := time.Now().Format("2006-01-02 15:04:05")
-	log.WithField("StartTime", startTime).Info("Starting to fetch facilities")
+	startTime := time.Now() // .Format("2006-01-02 15:04:05")
+	log.WithField("StartTime", startTime.Format("2006-01-02 15:04:05")).Info("Starting to fetch facilities")
 	numberCreated := 0
 	numberUpdated := 0
+	numberIgnored := 0
 	// numberDeleted := 0
 
 	resp, err := utils.GetWithBasicAuth(apiURL, config.MFLIntegratorConf.API.MFLUser,
@@ -301,9 +327,13 @@ func FetchFacilities() {
 	}
 
 	if resp != nil {
-		v, _, _, _ := jsonparser.Get(resp, "entry")
+		v, _, _, err := jsonparser.Get(resp, "entry")
+		if err != nil {
+			log.WithError(err).Error("No entries found from MFL")
+			return
+		}
 		var entries []LocationEntry
-		err := json.Unmarshal(v, &entries)
+		err = json.Unmarshal(v, &entries)
 		if err != nil {
 			log.WithError(err).Info("Sync S002: Error unmarshaling response body")
 			fmt.Println(string(resp))
@@ -312,11 +342,23 @@ func FetchFacilities() {
 		// Now we have our facilities
 		for i := range entries {
 			facility := GetOrgUnitFromFHIRLocation(entries[i])
+
 			facilityJSON, err := json.Marshal(facility)
 			if err != nil {
 				log.WithError(err).Info("Failed to marshal facility to JSON")
+				continue
 			}
 			log.WithField("FacilityJson", string(facilityJSON)).Info("Facility Object")
+			if len(facility.Path) < 15 {
+				log.WithFields(log.Fields{"UID": facility.UID, "Name": facility.Name}).Warn("Found no Parent for facility")
+				var fj dbutils.MapAnything
+				_ = json.Unmarshal(facilityJSON, &fj)
+				ouFailure := models.OrgUnitFailure{UID: utils.GetUID(), FacilityUID: facility.UID, MFLUID: facility.MFLUID,
+					Reason: "Parent not found", Object: fj, Action: "MFL Fetch"}
+				ouFailure.NewOrgUnitFailure()
+				// log this one too
+				continue
+			}
 
 			if !facility.ExistsInDB() { // facility doesn't exist in our DB
 				facility.NewOrgUnit()
@@ -359,10 +401,8 @@ func FetchFacilities() {
 				reqBody, err := json.Marshal(payload)
 				if facilityMetadata.Geometry.Get("type", "") == "" {
 					reqBody = utils.PatchJSONObject(reqBody, []byte(
-						`[
-							{"op": "remove", "path": "/organisationUnits/0/geometry"},
-							{"op": "remove", "path": "/organisationUnits/0/organisationUnitGroups"}
-						]`))
+						`[{"op": "remove", "path": "/organisationUnits/0/geometry"},
+						{"op": "remove", "path": "/organisationUnits/0/organisationUnitGroups"}]`))
 				}
 
 				if err != nil {
@@ -372,28 +412,36 @@ func FetchFacilities() {
 				reqF := models.RequestForm{
 					Source: "localhost", Destination: "base_OU", ContentType: "application/json",
 					Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
-					Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: "", BatchID: "", SubmissionID: "",
+					Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: facility.UID,
+					BatchID: "", SubmissionID: "",
 					CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2CreateServers, ","),
-					Body:      string(reqBody),
+					Body:      string(reqBody), ObjectType: "ORGANISATION_UNIT", ReportType: "OU",
 				}
-				fRequests, err := reqF.Save(dbConn)
-				if err != nil {
-					log.WithError(err).Error("Failed to queue facility creation")
-				}
-				log.WithField("Facility", fRequests.UID()).Info("Queued Facility for addition")
-
-				// Now create requests to add orgunit to the right orgunit groups
-				ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
-				requestForms := MakeOrgunitGroupsAdditionRequests(ouGroupRequests)
-				for _, rForm := range requestForms {
-					_, err := rForm.Save(dbConn)
+				// Only queue facility if UID is valid
+				if facility.ValidateUID() && len(facility.Path) > 15 {
+					fRequest, err := reqF.Save(dbConn)
 					if err != nil {
-						log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
-							"Failed to queue request to add OU to OUGroup")
-						continue
+						log.WithError(err).Error("Failed to queue facility creation")
 					}
-					log.WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Info(
-						"Queued Request to add facility to group!")
+					log.WithField("Facility", fRequest.UID()).Info("Queued Facility for addition")
+
+					// Now create requests to add orgunit to the right orgunit groups
+					ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+					requestForms := MakeOrgunitGroupsAdditionRequests(
+						ouGroupRequests, dbutils.Int(fRequest.ID()), facilityMetadata.UID)
+					for _, rForm := range requestForms {
+						_, err := rForm.Save(dbConn)
+						if err != nil {
+							log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
+								"Failed to queue request to add OU to OUGroup")
+							continue
+						}
+						log.WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Info(
+							"Queued Request to add facility to group!")
+					}
+				} else {
+					log.WithFields(log.Fields{"Facility": facility.Name, "UID": facility.UID, "MFLID": facility.MFLID}).Warn(
+						"Facility had invalid UID or has no parent thus not queued:")
 				}
 
 			} else {
@@ -409,6 +457,7 @@ func FetchFacilities() {
 					// new definition matched the old
 					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID(), "Parent": fj["parent"]}).Info(
 						"========= Facility has no changes =======")
+					numberIgnored += 1
 					continue
 				} else {
 					metadataPayload := models.GenerateMetadataPayload(fj, diffMap)
@@ -417,22 +466,69 @@ func FetchFacilities() {
 						"::::::::: Facility had some changes :::::::::")
 
 					// make a revision
-					//facilityRevision := models.OrgUnitRevision{
-					//	OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
-					//}
+					facilityRevision := models.OrgUnitRevision{
+						OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
+					}
+					facilityRevision.NewOrgUnitRevision()
 
-					// Generate Metadata Update object
-
+					// Generate Metadata Update object - for facility with valid UID
+					if facility.ValidateUID() {
+						reqF := GenerateUpdateMetadataRequest(metadataPayload)
+						_, err := reqF.Save(dbConn)
+						if err != nil {
+							log.WithError(err).WithFields(log.Fields{"OU": reqF.UID}).Error(
+								"Failed to queue - update request for OU")
+							continue
+						}
+					}
 					numberUpdated += 1
-
 				}
 
 			}
 		}
 	}
 
-	endTime := time.Now().Format("2006-01-02 15:04:05")
-	log.WithField("EndTime", endTime).Info("Stopped processing fetched facilities")
+	endTime := time.Now() // .Format("2006-01-02 15:04:05")
+
+	syncLog := models.SyncLog{
+		UID:           utils.GetUID(),
+		Started:       startTime,
+		MFLID:         mflId,
+		Stopped:       endTime,
+		NumberCreated: dbutils.Int(numberCreated),
+		NumberUpdated: dbutils.Int(numberUpdated),
+		// ServersSyncLog:
+	}
+	syncLog.LogSync()
+
+	log.WithFields(log.Fields{
+		"EndTime":       endTime,
+		"NumberCreated": numberCreated,
+		"NumberUpdated": numberUpdated}).Info("Stopped processing fetched facilities")
+}
+
+const districtSQL = `SELECT mflid FROM organisationunit WHERE hierarchylevel = 
+    (SELECT level from orgunitlevel where name = 'District') ORDER BY name`
+
+// FetchFacilitiesByDistrict fetches Facilities from MFL by district - if we don't get mflids then fetch everything
+func FetchFacilitiesByDistrict() {
+	log.Info("Going to Fetch Facilities By District")
+	rows, err := db.GetDB().Queryx(districtSQL)
+	if err != nil {
+		log.WithError(err).Info("Failed to get district mflids from database")
+		FetchFacilities("")
+		return
+	}
+	for rows.Next() {
+		var district string
+		err := rows.Scan(&district)
+		if err != nil {
+			log.WithError(err).Error("Error reading district mflid from database:")
+			continue
+		}
+		FetchFacilities(district)
+	}
+	_ = rows.Close()
 }
 
 // GetExtensions gets extensions within an entry in a FHIR bundle
@@ -480,11 +576,18 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	id := *location.Resource.Id
 	parent := ""
 	if location.Resource.PartOf != nil {
-		parent = *location.Resource.PartOf.Reference
+		if location.Resource.PartOf.Reference != nil {
+			parent = *location.Resource.PartOf.Reference
+		}
 	}
 	parent = strings.ReplaceAll(parent, "Location/", "")
 	extensions := GetExtensions(location.Resource.Extension)
-	address := *location.Resource.Address.Text
+	address := ""
+	if location.Resource.Address != nil {
+		if location.Resource.Address.Text != nil {
+			address = *location.Resource.Address.Text
+		}
+	}
 	lat := location.Resource.Position.Latitude
 	long := location.Resource.Position.Longitude
 	coordinates := []json.Number{lat, long}
@@ -543,225 +646,11 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	return facility
 }
 
+// SyncLocationsToDHIS2Instances syncs the DHIS2 base hierarchy to subscribing DHIS2 instances
 func SyncLocationsToDHIS2Instances() {
 	for _, serverName := range strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2HierarchyServers, ",") {
-		// Servers in this config can receive the base DHIS2 organisation unit hierarchy
-		log.WithField("CCDHIS2", serverName).Info("CC Hierarchy Servers")
-		server, err := models.GetServerByName(serverName)
-		if err != nil {
-			log.WithError(err).Info("Could not proceed to CC hierarchy to server")
-		}
-		// check if we already have ous in the instance and only create if none present
-		ouURL := server.URL()
-		baseDHIS2URL, err := utils.GetDHIS2BaseURL(ouURL)
-		if err != nil {
-			log.WithError(err).Info("CAUTION DHIS2 API URL should have /api/ part")
-			continue
-		}
-		p := url.Values{}
-		p.Add("fields", "id,name")
-		p.Add("paging", "true")
-		p.Add("pageSize", "1")
-		p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel-1))
-		chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?"
-		//if strings.LastIndex(ouURL, "?") == len(ouURL)-1 {
-		//	ouURL += p.Encode()
-		//} else {
-		//	ouURL += "?" + p.Encode()
-		//}
-		chekOusURL += p.Encode()
-		log.WithFields(log.Fields{"ServerURL": chekOusURL, "Name": server.Name()}).Info("Trying to send hierarchy to server")
-
-		var respBody []byte
-		switch server.AuthMethod() {
-		case "Basic":
-			resp, err := utils.GetWithBasicAuth(chekOusURL, server.Username(), server.Password())
-			respBody = resp
-			if err != nil {
-				log.WithError(err).Error("Failed to get ous from server")
-				continue
-			}
-
-		case "Token":
-			resp, err := utils.GetWithToken(chekOusURL, server.AuthToken())
-			respBody = resp
-			if err != nil {
-				log.WithError(err).Error("Failed to get ous from server")
-				continue
-			}
-		default:
-			// pass
-		}
-		if respBody != nil {
-			v, _, _, _ := jsonparser.Get(respBody, "pager", "total")
-			if string(v) != "0" && !*config.ForceSync {
-
-				log.WithField("ForceSync", *config.ForceSync).Info("FORCE SYNC >>>>>>>>>>")
-				continue // we have ous already
-			}
-			log.WithField("Server", serverName).Info("We can now sync the hierarchy!!")
-			//Send Ou Levels
-			syncOuLevels := GenerateOuLevelMetadata()
-			levelsPayload := make(map[string][]models.MetadataOuLevel)
-			levelsPayload["organisationUnitLevels"] = syncOuLevels
-			sendMetadata(server, levelsPayload)
-
-			// send Ou Groups
-			syncOuGroups := GenerateOuGroupsMetadata()
-			groupsPayload := make(map[string][]models.MetadataOuGroup)
-			groupsPayload["organisationUnitGroups"] = syncOuGroups
-			sendMetadata(server, groupsPayload)
-
-			// Send Ous
-			//for level := 1; level < 3; level++ {
-			for level := 1; level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; level++ {
-
-				syncOus := GenerateOuMetadataByLevel(level)
-				//for _, ou := range syncOus {
-				//	pp, _ := json.Marshal(ou)
-				//	log.WithFields(log.Fields{"Payload": string(pp), "Server": serverName, "UID": ou.UID, "ID": ou.ID}).Info("DEBUGGGGGGGG")
-				//	rBody := sendMetadata(server, ou)
-				//	if rBody != nil {
-				//		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
-				//	}
-				//}
-				ouChunks := lo.Chunk(syncOus, config.MFLIntegratorConf.API.MFLMetadataBatchSize)
-
-				for _, chunck := range ouChunks {
-					payload := make(map[string][]models.MetadataOu)
-					payload["organisationUnits"] = chunck
-
-					rBody := sendMetadata(server, payload)
-					if rBody != nil {
-						log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
-					}
-					time.Sleep(3000)
-
-				}
-
-			}
-
-		}
-
+		models.SyncLocationsToServer(serverName)
 	}
-}
-
-const selectMetaDatOusSQL = `SELECT uid,name, code, shortname,description, path, hierarchylevel, 
-    	to_char(openingdate, 'YYYY-mm-dd') AS openingdate, geometry_geojson(geometry, hierarchylevel) AS geometry, 
-    	phonenumber, email, address, get_parent(id) parent 
-		FROM organisationunit 
-		 `
-
-// WHERE hierarchylevel = $1 `
-
-func GenerateOuMetadataByLevel(level int) []models.MetadataOu {
-	var ous []models.MetadataOu
-	dbConn := db.GetDB()
-	ouSQL := selectMetaDatOusSQL
-	if level == 1 {
-		topLevelUIDs := strings.Split(config.MFLIntegratorConf.API.MFLDHIS2TreeIDs, ",")
-		if len(topLevelUIDs) > 0 {
-			for i, uid := range topLevelUIDs {
-				topLevelUIDs[i] = fmt.Sprintf("'%s'", uid)
-			}
-			ouSQL += fmt.Sprintf(" WHERE uid IN(%s)  AND hierarchylevel = $1", strings.Join(topLevelUIDs, ","))
-		}
-	} else {
-		ouSQL += " WHERE hierarchylevel = $1 "
-
-	}
-	err := dbConn.Select(&ous, ouSQL, level)
-	if err != nil {
-		log.WithError(err).WithField("SQL", ouSQL).Error("Failed to generate Org Units Metadata")
-		return nil
-	}
-	ous = lo.Map(ous, func(item models.MetadataOu, index int) models.MetadataOu {
-		item.ID = item.UID
-		return item
-	})
-
-	return ous
-}
-
-func GenerateOuMetadataByUID(uid string) (models.MetadataOu, error) {
-	var ou models.MetadataOu
-	dbConn := db.GetDB()
-	ouSQL := selectMetaDatOusSQL + " WHERE uid = $1"
-
-	err := dbConn.Get(&ou, ouSQL, uid)
-	if err != nil {
-		log.WithError(err).WithField("SQL", ouSQL).Error("Failed to generate Org Unit Metadata")
-		return ou, err
-	}
-	ou.ID = ou.UID
-
-	return ou, nil
-}
-
-// GenerateOuLevelMetadata ...
-func GenerateOuLevelMetadata() []models.MetadataOuLevel {
-	var ouLevels []models.MetadataOuLevel
-	dbConn := db.GetDB()
-
-	err := dbConn.Select(&ouLevels, `SELECT uid,name, 
-       case when code is null then '' else code end, level  FROM orgunitlevel`)
-	if err != nil {
-		log.WithError(err).Error("Failed to generate Org Unit Levels Metadata")
-		return nil
-	}
-	return ouLevels
-}
-
-// GenerateOuGroupsMetadata ...
-func GenerateOuGroupsMetadata() []models.MetadataOuGroup {
-	var ouGroups []models.MetadataOuGroup
-	dbConn := db.GetDB()
-
-	err := dbConn.Select(&ouGroups, `SELECT uid,name, case when code is null then '' else code end, shortname  FROM orgunitgroup`)
-	if err != nil {
-		log.WithError(err).Error("Failed to generate Org Unit Groups Metadata")
-		return nil
-	}
-	return ouGroups
-}
-
-// sendMetadata .....
-func sendMetadata(server models.Server, data interface{}) []byte {
-	mURL := server.CompleteURL()
-	log.WithField("URL", mURL).Info("MetaDataURL")
-	serverName := server.Name()
-
-	var rBody []byte
-	switch server.AuthMethod() {
-	case "Basic":
-		resp, err := utils.PostWithBasicAuth(mURL, data, server.Username(), server.Password())
-		rBody = resp
-		if err != nil {
-			ouList := data.(map[string][]models.MetadataOu)["organisationUnits"]
-			troubleOus := lo.Map(ouList, func(item models.MetadataOu, index int) string {
-				return item.ID
-			})
-			log.WithFields(log.Fields{"Server": serverName, "TroubleOus": troubleOus}).WithError(err).Error(
-				"Failed to import metadata in server")
-		}
-	case "Token":
-		resp, err := utils.PostWithToken(mURL, data, server.AuthToken())
-		rBody = resp
-		if err != nil {
-			ouList := data.(map[string][]models.MetadataOu)["organisationUnits"]
-			troubleOus := lo.Map(ouList, func(item models.MetadataOu, index int) string {
-				return item.ID
-			})
-			log.WithFields(log.Fields{"Server": serverName, "TroubleOus": troubleOus}).WithError(err).Error(
-				"Failed to import metadata in server")
-		}
-	default:
-		//
-	}
-	if rBody != nil {
-		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
-	}
-	return rBody
 }
 
 // CreateOrgUnitGroupPayload ...
@@ -771,7 +660,7 @@ func CreateOrgUnitGroupPayload(ou models.MetadataOu) map[string][]byte {
 		for _, g := range ou.OrganisationUnitGroups {
 			groupId := g.Get("id", "")
 			ouGroupReqs[groupId.(string)] = []byte(fmt.Sprintf(
-				`[{"op": "add", "path": "/organisationUniuts/-", "value": {"id", "%s"}}]`, ou.UID))
+				`[{"op": "add", "path": "/organisationUnits/-", "value": {"id": "%s"}}]`, ou.UID))
 		}
 
 	}
@@ -779,19 +668,43 @@ func CreateOrgUnitGroupPayload(ou models.MetadataOu) map[string][]byte {
 }
 
 // MakeOrgunitGroupsAdditionRequests ....
-func MakeOrgunitGroupsAdditionRequests(ouGroupPayloads map[string][]byte) []models.RequestForm {
+func MakeOrgunitGroupsAdditionRequests(
+	ouGroupPayloads map[string][]byte, dependency dbutils.Int, facilityUID string) []models.RequestForm {
 	requests := make([]models.RequestForm, len(ouGroupPayloads))
 	for k, v := range ouGroupPayloads {
+		if len(k) == 0 {
+			continue
+		}
 		year, week := time.Now().ISOWeek()
-		reqF := models.RequestForm{
-			Source: "localhost", Destination: "base_OU_GroupAdd", ContentType: "application/json",
+		var reqF = models.RequestForm{
+			DependsOn: dependency,
+			Source:    "localhost", Destination: "base_OU_GroupAdd", ContentType: "application/json-patch+json",
 			Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
-			Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: "", BatchID: "", SubmissionID: "",
+			Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: facilityUID, BatchID: "", SubmissionID: "",
 			CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2OuGroupAddServers, ","),
 			URLSuffix: fmt.Sprintf("/%s", k),
-			Body:      string(v),
+			Body:      string(v), ObjectType: "ORGUNIT_GROUP_ADD", ReportType: "OUGROUP_ADD",
 		}
 		requests = append(requests, reqF)
 	}
 	return requests
+}
+
+func GenerateUpdateMetadataRequest(update []models.MetadataObject) models.RequestForm {
+	req := models.RequestForm{}
+	body, err := json.Marshal(update)
+	if err != nil {
+		log.WithError(err).Error("Failed to parse facility update metadata")
+		return req
+	}
+	year, week := time.Now().ISOWeek()
+	reqF := models.RequestForm{
+		Source: "localhost", Destination: "base_OU", ContentType: "application/json-patch+json",
+		Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
+		Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: "", BatchID: "", SubmissionID: "",
+		CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2CreateServers, ","),
+		Body:      string(body),
+	}
+
+	return reqF
 }

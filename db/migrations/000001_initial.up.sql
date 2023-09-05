@@ -194,6 +194,7 @@ CREATE TABLE requests(
      uid VARCHAR(11) NOT NULL DEFAULT '',
      source INTEGER REFERENCES servers(id), -- source app/server
      destination INTEGER REFERENCES servers(id), -- source app/server
+     depends_on BIGINT REFERENCES requests(id),
      cc_servers INTEGER[] NOT NULL DEFAULT ARRAY[]::INT[],
      cc_servers_status JSONB DEFAULT '{}'::JSONB,
      batchid TEXT NOT NULL DEFAULT '',
@@ -239,11 +240,12 @@ CREATE INDEX requests_uid ON requests(uid);
 CREATE TABLE sync_log(
     id BIGSERIAL PRIMARY KEY,
     uid VARCHAR(11) NOT NULL DEFAULT '',
+    mflid TEXT,
     started TIMESTAMPTZ,
     stopped TIMESTAMPTZ,
-    number_synchronised INTEGER,
     number_created INTEGER,
     number_updated INTEGER,
+    number_ignored INTEGER,
     number_deleted INTEGER,
     servers_sync_log JSONB DEFAULT '{}'::jsonb,
     created TIMESTAMPTZ DEFAULT current_timestamp,
@@ -455,13 +457,67 @@ BEGIN
     SELECT parentid INTO pid FROM organisationunit WHERE id = i;
     IF FOUND THEN
         SELECT
-            ('{}')::JSON
+            ('{ "id": "' || uid || '" }')::JSON
             INTO parent FROM organisationunit WHERE id = pid;
     END IF;
 
     RETURN parent;
 END
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION create_requests_cc_status(int_array integer[]) RETURNS jsonb AS $$
+DECLARE
+    i integer;
+    result_json jsonb := '{}';
+BEGIN
+    IF array_length(int_array, 1) IS NOT NULL THEN
+        FOR i IN array_lower(int_array, 1) .. array_upper(int_array, 1) LOOP
+                -- Create a JSON object for the current integer
+                result_json := jsonb_set(
+                        result_json,
+                        ARRAY[(int_array)[i]]::text[],
+                        '{"status": "", "errors": "", "retries": 0, "statusCode": "", "response": ""}'::jsonb,
+                        true
+                    );
+            END LOOP;
+    END IF;
+
+    RETURN result_json;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create the trigger function
+CREATE OR REPLACE FUNCTION after_request_insert_trigger_function()
+    RETURNS TRIGGER AS $$
+BEGIN
+    -- Call the generate_json_objects function with the inserted array
+    UPDATE requests SET cc_servers_status =  create_requests_cc_status(NEW.cc_servers)
+    WHERE id = NEW.id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create the trigger
+CREATE TRIGGER after_request_insert_trigger
+    AFTER INSERT ON requests
+    FOR EACH ROW
+EXECUTE FUNCTION after_request_insert_trigger_function();
+
+CREATE OR REPLACE FUNCTION status_of_dependence(reqId BIGINT) RETURNS TEXT AS
+$delim$
+DECLARE
+    dep_status TEXT := '';
+    dependence BIGINT;
+BEGIN
+    SELECT depends_on INTO dependence FROM requests WHERE id = reqId;
+    IF dependence IS NOT NULL THEN
+        SELECT status INTO dep_status FROM requests WHERE id = dependence;
+        RETURN dep_status;
+    END IF;
+    RETURN dep_status;
+END;
+$delim$ LANGUAGE 'plpgsql';
 
 -- Data Follows
 INSERT INTO servers (name, username, password, ipaddress, url, auth_method, auth_token)

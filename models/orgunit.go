@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/db"
+	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	log "github.com/sirupsen/logrus"
 	"github.com/twpayne/go-geom"
@@ -38,24 +39,6 @@ func (a *Geometry) Scan(value interface{}) error {
 func (a Geometry) Value() (driver.Value, error) {
 	return json.Marshal(a)
 }
-
-//func (g *Geometry) UnmarshalJSON(data []byte) error {
-//	type Alias Geometry
-//	aux := &struct {
-//		*Alias
-//	}{
-//		Alias: (*Alias)(g),
-//	}
-//	if err := json.Unmarshal(data, &aux); err != nil {
-//		return err
-//	}
-//	switch g.Type {
-//	case "Point", "Polygon":
-//		return nil
-//	default:
-//		return fmt.Errorf("unsupported geometry type: %s", g.Type)
-//	}
-//}
 
 type OrgUnitLevel struct {
 	ID      string `db:"id" json:"id"`
@@ -111,15 +94,15 @@ func GetOuGroupUIDByName(name string) string {
 	return uid
 }
 
-func GetOrgUnitGroupByName(name string) *OrgUnitGroup {
-	var og OrgUnitGroup
-	dbConn := db.GetDB()
-	err := dbConn.Get(&og, "SELECT id, name, uid FROM orgunitgroup WHERE name=$1", name)
-	if err != nil {
-		return nil
-	}
-	return &og
-}
+//func GetOrgUnitGroupByName(name string) *OrgUnitGroup {
+//	var og OrgUnitGroup
+//	dbConn := db.GetDB()
+//	err := dbConn.Get(&og, "SELECT id, name, uid FROM orgunitgroup WHERE name=$1", name)
+//	if err != nil {
+//		return nil
+//	}
+//	return &og
+//}
 
 const insertOrgunitGroupSQL = `
 INSERT INTO orgunitgroup(uid, name, shortname, created, updated)
@@ -340,7 +323,8 @@ func (o *OrganisationUnit) NewOrgUnit() {
 		var facilityJSON dbutils.MapAnything
 		fj, _ := json.Marshal(o)
 		_ = json.Unmarshal(fj, &facilityJSON)
-		ouFailure := OrgUnitFailure{FacilityUID: o.UID, MFLID: o.UID, Reason: err.Error(), Object: facilityJSON, Action: "Add"}
+		ouFailure := OrgUnitFailure{UID: utils.GetUID(),
+			FacilityUID: o.UID, MFLUID: o.MFLUID, Reason: err.Error(), Object: facilityJSON, Action: "Add"}
 		ouFailure.NewOrgUnitFailure()
 		return
 	}
@@ -406,10 +390,23 @@ func (o *OrganisationUnit) UpdateMFLUID(mflUID string) {
 func GetOrgUnitByMFLID(mflid string) OrganisationUnit {
 	dbConn := db.GetDB()
 	var ou OrganisationUnit
-	err := dbConn.Get(&ou, `SELECT id,hierarchylevel,path FROM organisationunit WHERE mflid = $1`, mflid)
+	rows, err := dbConn.Queryx(`SELECT id,hierarchylevel,path FROM organisationunit WHERE mflid = $1`, mflid)
 	if err != nil {
-		log.WithError(err).WithField("MFLID", mflid).Info("Failed to get orgunit group DBUID")
+		log.WithError(err).WithField("MFLID", mflid).Info("Failed to get orgunit DBUID")
 	}
+	for rows.Next() {
+		var id, path string
+		var lvl int
+		err := rows.Scan(&id, &lvl, &path)
+		if err != nil {
+			// log.Fatalln("==>", err)
+			log.WithError(err).Error("Error reading request from queue:")
+		}
+		ou.ID = id
+		ou.Level = lvl
+		ou.Path = path
+	}
+	_ = rows.Close()
 	return ou
 }
 
@@ -550,7 +547,7 @@ type OrgUnitFailure struct {
 	ID          string              `db:"id" json:"id"`
 	UID         string              `db:"uid" json:"uid"`
 	FacilityUID string              `db:"facility_uid" json:"facilityUID"`
-	MFLID       string              `db:"mflid" json:"MFLID"`
+	MFLUID      string              `db:"mfluid" json:"MFLUID"`
 	Action      string              `db:"action" json:"action"` // create, update, delete
 	Reason      string              `db:"reason" json:"reason"` // error message
 	Object      dbutils.MapAnything `db:"object" json:"object"`

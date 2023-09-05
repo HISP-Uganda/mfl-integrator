@@ -29,5 +29,6 @@ api:
   mfl_dhis2_tree_ids: "akV6429SUqu"
   mfl_metadata_batch_size: 50
   mfl_dhis2_facility_level: 5
+  mfl_sync_cron_expression: "0 0-23/6 * * *"
   authtoken: ABC
   smsurl: ""

@@ -34,11 +34,11 @@ type BulkDataValuesRequest struct {
 // ResponseStatus the status of a response
 type ResponseStatus string
 
-const (
-	ResponseStatusSuccess ResponseStatus = "SUCCESS"
-	ResponseStatusError   RequestStatus  = "ERROR"
-	ResponseStatusWarning ResponseStatus = "WARNING"
-)
+//const (
+//	ResponseStatusSuccess ResponseStatus = "SUCCESS"
+//	ResponseStatusError   RequestStatus  = "ERROR"
+//	ResponseStatusWarning ResponseStatus = "WARNING"
+// )
 
 // ImportOptions the import options for dhis2 data import
 type ImportOptions struct {
@@ -71,10 +71,12 @@ type ImportOptions struct {
 
 //ImportCount the import count in response
 type ImportCount struct {
+	Created  int
 	Imported int
 	Updated  int
 	Ignored  int
 	Deleted  int
+	Total    int
 }
 
 type ConflictObject struct {
@@ -88,9 +90,11 @@ type ConflictObject struct {
 type Response struct {
 	ResponseType    string
 	Status          ResponseStatus
-	ImportOptions   ImportOptions
-	ImportCount     ImportCount
-	Description     string
+	ImportOptions   ImportOptions    `json:"importOptions,omitempty"`
+	ImportCount     ImportCount      `json:"importCount,omitempty"`
+	Stats           ImportCount      `json:"stats,omitempty"`
+	Description     string           `json:"description,omitempty"`
+	TypeReports     []any            `json:"typeReports,omitempty"`
 	Conflicts       []ConflictObject `json:"conflicts,omitempty"`
 	DataSetComplete string           `json:"dataSetComplete,omitempty"`
 }

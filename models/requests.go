@@ -1,6 +1,7 @@
 package models
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,14 +27,14 @@ type RequestStatus string
 
 // constants for the status
 const (
-	RequestStatusReady     = RequestStatus("ready")
-	RequestStatusPending   = RequestStatus("pending")
+	RequestStatusReady = RequestStatus("ready")
+	// RequestStatusPending   = RequestStatus("pending")
 	RequestStatusExpired   = RequestStatus("expired")
 	RequestStatusCompleted = RequestStatus("completed")
 	RequestStatusFailed    = RequestStatus("failed")
-	RequestStatusError     = RequestStatus("error")
-	RequestStatusIgnored   = RequestStatus("ignored")
-	RequestStatusCanceled  = RequestStatus("canceled")
+	// RequestStatusError     = RequestStatus("error")
+	// RequestStatusIgnored   = RequestStatus("ignored")
+	RequestStatusCanceled = RequestStatus("canceled")
 )
 
 // Request represents our requests queue in the database
@@ -42,6 +43,7 @@ type Request struct {
 		ID                     RequestID     `db:"id" json:"-"`
 		UID                    string        `db:"uid" json:"uid"`
 		BatchID                string        `db:"batchid" json:"batchId,omitempty"`
+		DependsOn              dbutils.Int   `db:"depends_on" json:"dependsOn,omitempty"`
 		Source                 int           `db:"source" json:"source" validate:"required"`
 		Destination            int           `db:"destination" json:"destination" validate:"required"`
 		CCServers              pq.Int64Array `db:"cc_servers" json:"CCServers,omitempty"`
@@ -153,8 +155,8 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 	r.Errors = c.Query("extras")
 	r.District = c.Query("district")
 	ccList := c.DefaultQuery("cc", config.MFLIntegratorConf.API.MFLCCDHIS2Servers)
-	serverIDs := lo.Map(strings.Split(ccList, ","), func(item string, _ int) int64 { // lodash stuff
-		return GetServerIDByName(item)
+	serverIDs := lo.Map(strings.Split(ccList, ","), func(name string, _ int) int64 { // lodash stuff
+		return GetServerIDByName(name)
 	})
 	validServerIDs := lo.Filter(serverIDs, func(item int64, _ int) bool {
 		return item > 0
@@ -215,8 +217,12 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 		return *req, errors.New(fmt.Sprintf("Unsupported Content-Type: %s", contentType))
 	}
 
-	r.Source = int(GetServerIDByName(reqForm.Source))
-	r.Destination = int(GetServerIDByName(reqForm.Destination))
+	// r.Source = int(GetServerIDByName(reqForm.Source))
+	// r.Destination = int(GetServerIDByName(reqForm.Destination))
+	source := ServerMapByName[reqForm.Source]
+	r.Source = int(source.ID())
+	destination := ServerMapByName[reqForm.Destination]
+	r.Source = int(destination.ID())
 	if r.Source == 0 {
 		return *req, errors.New(fmt.Sprintf("Source server %s not found!", reqForm.Source))
 	}
@@ -225,7 +231,8 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 
 	}
 	ccServers := lo.Map(reqForm.CCServers, func(name string, _ int) int64 {
-		return GetServerIDByName(name)
+		srv := ServerMapByName[name]
+		return int64(srv.ID())
 	})
 	r.CCServers = ccServers
 	r.UID = utils.GetUID()
@@ -249,10 +256,16 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 	r.District = reqForm.District
 	r.Body = reqForm.Body
 
-	_, err := db.NamedExec(insertRequestSQL, r)
+	rows, err := db.NamedQuery(insertRequestSQL, r)
 	if err != nil {
 		log.WithError(err).Error("Error INSERTING Request")
 	}
+	for rows.Next() {
+		var reqId sql.NullInt64
+		_ = rows.Scan(&reqId)
+		r.ID = RequestID(reqId.Int64)
+	}
+	_ = rows.Close()
 	return *req, nil
 }
 
@@ -271,47 +284,53 @@ func (r *Request) RequestDBFields() []string {
 
 const insertRequestSQL = `
 INSERT INTO 
-requests (source, destination, uid, batchid, ctype, body, body_is_query_param, period, week, month, year,
+requests (source, destination, depends_on, uid, batchid, ctype, body, body_is_query_param, period, week, month, year,
 			raw_msg, msisdn, facility, district, report_type, object_type, extras, url_suffix, cc_servers,
 			created, updated) 
-	VALUES(:source, :destination, :uid, :batchid, :ctype, :body, :body_is_query_param, :period,
+	VALUES(:source, :destination, :depends_on, :uid, :batchid, :ctype, :body, :body_is_query_param, :period,
 			:week, :month, :year, :raw_msg, :msisdn, :facility, :district, :report_type, :object_type,
-			:extras, :url_suffix, :cc_servers, now(), now())`
+			:extras, :url_suffix, :cc_servers, now(), now()) RETURNING id`
 
 type RequestForm struct {
-	ID                RequestID `db:"id" json:"-"`
-	UID               string    `db:"uid" json:"uid"`
-	BatchID           string    `db:"batchid" json:"batchId,omitempty"`
-	Source            string    `db:"source" json:"source" validate:"required"`
-	Destination       string    `db:"destination" json:"destination" validate:"required"`
-	CCServers         []string  `db:"cc_servers" json:"CCServers,omitempty"`
-	ContentType       string    `db:"ctype" json:"contentType,omitempty" validate:"required"`
-	Body              string    `db:"body" json:"body" validate:"required"`
-	FrequencyType     string    `db:"frequency_type" json:"frequencyType,omitempty"`
-	Period            string    `db:"period" json:"period,omitempty"`
-	Day               string    `db:"day" json:"day,omitempty"`
-	Week              string    `db:"week" json:"week,omitempty"`
-	Month             string    `db:"month" json:"month,omitempty"`
-	Year              string    `db:"year" json:"year,omitempty"`
-	MSISDN            string    `db:"msisdn" json:"msisdn,omitempty"`
-	RawMsg            string    `db:"raw_msg" json:"rawMsg,omitempty"`
-	Facility          string    `db:"facility" json:"facility,omitempty"`
-	District          string    `db:"district" json:"district,omitempty"`
-	ReportType        string    `db:"report_type" json:"reportType,omitempty" validate:"required"` // type of object eg event, enrollment, datavalues
-	ObjectType        string    `db:"object_type" json:"objectType,omitempty"`                     // type of report as in source system
-	Extras            string    `db:"extras" json:"extras,omitempty"`
-	Suspended         bool      `db:"suspended" json:"suspended,omitempty"`                   // whether request is suspended
-	BodyIsQueryParams bool      `db:"body_is_query_param" json:"bodyIsQueryParams,omitempty"` // whether body is to be used a query parameters
-	SubmissionID      string    `db:"submissionid" json:"submissionId,omitempty"`             // a reference ID is source system
-	URLSuffix         string    `db:"url_suffix" json:"urlSuffix,omitempty"`
+	ID                RequestID   `db:"id" json:"-"`
+	UID               string      `db:"uid" json:"uid"`
+	BatchID           string      `db:"batchid" json:"batchId,omitempty"`
+	Source            string      `db:"source" json:"source" validate:"required"`
+	Destination       string      `db:"destination" json:"destination" validate:"required"`
+	DependsOn         dbutils.Int `db:"depends_on" json:"dependsOn,omitempty"`
+	CCServers         []string    `db:"cc_servers" json:"CCServers,omitempty"`
+	ContentType       string      `db:"ctype" json:"contentType,omitempty" validate:"required"`
+	Body              string      `db:"body" json:"body" validate:"required"`
+	FrequencyType     string      `db:"frequency_type" json:"frequencyType,omitempty"`
+	Period            string      `db:"period" json:"period,omitempty"`
+	Day               string      `db:"day" json:"day,omitempty"`
+	Week              string      `db:"week" json:"week,omitempty"`
+	Month             string      `db:"month" json:"month,omitempty"`
+	Year              string      `db:"year" json:"year,omitempty"`
+	MSISDN            string      `db:"msisdn" json:"msisdn,omitempty"`
+	RawMsg            string      `db:"raw_msg" json:"rawMsg,omitempty"`
+	Facility          string      `db:"facility" json:"facility,omitempty"`
+	District          string      `db:"district" json:"district,omitempty"`
+	ReportType        string      `db:"report_type" json:"reportType,omitempty" validate:"required"` // type of report as in source system
+	ObjectType        string      `db:"object_type" json:"objectType,omitempty"`                     // type of object eg event, enrollment, datavalues
+	Extras            string      `db:"extras" json:"extras,omitempty"`
+	Suspended         bool        `db:"suspended" json:"suspended,omitempty"`                   // whether request is suspended
+	BodyIsQueryParams bool        `db:"body_is_query_param" json:"bodyIsQueryParams,omitempty"` // whether body is to be used a query parameters
+	SubmissionID      string      `db:"submissionid" json:"submissionId,omitempty"`             // a reference ID is source system
+	URLSuffix         string      `db:"url_suffix" json:"urlSuffix,omitempty"`
 }
 
 func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
 	req := &Request{}
 	r := &req.r
 
-	r.Source = int(GetServerIDByName(rq.Source))
-	r.Destination = int(GetServerIDByName(rq.Destination))
+	r.DependsOn = rq.DependsOn
+	// r.Source = int(GetServerIDByName(rq.Source))
+	// r.Destination = int(GetServerIDByName(rq.Destination))
+	source := ServerMapByName[rq.Source]
+	r.Source = int(source.ID())
+	destination := ServerMapByName[rq.Destination]
+	r.Destination = int(destination.ID())
 	if r.Source == 0 {
 		return *req, errors.New(fmt.Sprintf("Source server %s not found!", rq.Source))
 	}
@@ -344,9 +363,16 @@ func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
 	r.District = rq.District
 	r.Body = rq.Body
 
-	_, err := db.NamedExec(insertRequestSQL, r)
+	rows, err := db.NamedQuery(insertRequestSQL, r)
 	if err != nil {
 		log.WithError(err).Error("Error INSERTING Request")
 	}
+
+	for rows.Next() {
+		var reqId sql.NullInt64
+		_ = rows.Scan(&reqId)
+		r.ID = RequestID(reqId.Int64)
+	}
+	_ = rows.Close()
 	return *req, nil
 }
