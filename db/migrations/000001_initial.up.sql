@@ -236,6 +236,7 @@ CREATE INDEX requests_facility ON requests(facility);
 CREATE INDEX requests_district ON requests(district);
 CREATE INDEX requests_ctype ON requests(ctype);
 CREATE INDEX requests_uid ON requests(uid);
+CREATE INDEX requests_depends_on ON requests(depends_on);
 
 CREATE TABLE sync_log(
     id BIGSERIAL PRIMARY KEY,
@@ -518,6 +519,51 @@ BEGIN
     RETURN dep_status;
 END;
 $delim$ LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE FUNCTION failed_cc_servers(servers integer[], servers_status jsonb) RETURNS integer[] AS
+$delim$
+DECLARE
+    i integer;
+    failed_servers integer[] := '{}'::int[];
+    status_code text;
+    status text;
+BEGIN
+    IF array_length(servers, 1) IS NOT NULL THEN
+        FOR i IN array_lower(servers, 1) .. array_upper(servers, 1) LOOP
+                status_code := servers_status->((servers)[i])::text->>'statusCode';
+                status := servers_status->((servers)[i])::text->>'status';
+                IF status_code LIKE '4%' OR status_code LIKE '5%' OR status = '' THEN
+                    failed_servers := array_append(failed_servers, servers[i]);
+                END IF;
+
+            END LOOP;
+    END IF;
+
+    RETURN failed_servers;
+END;
+$delim$ LANGUAGE plpgsql;
+
+-- reset request's cc_servers_retries for cc_servers - targeting failed ones
+CREATE OR REPLACE FUNCTION reset_request_cc_server_retries(reqId bigint, servers integer[]) RETURNS void AS
+$delim$
+DECLARE
+    servers_status jsonb;
+BEGIN
+    SELECT cc_servers_status INTO servers_status FROM requests WHERE id = reqId;
+    IF FOUND THEN
+        IF array_length(servers, 1) IS NOT NULL THEN
+            FOR i IN array_lower(servers, 1) .. array_upper(servers, 1) LOOP
+                    servers_status := jsonb_set(servers_status, ARRAY[servers[i],'retries']::TEXT[],'0'::jsonb, false);
+                    -- servers_status := jsonb_set(servers_status, ARRAY[servers[i],'statusCode']::TEXT[],'""'::jsonb, false);
+                    -- servers_status := jsonb_set(servers_status, ARRAY[servers[i],'status']::TEXT[],'""'::jsonb, false);
+                    EXECUTE 'UPDATE requests SET cc_servers_status = $1  WHERE id = $2' USING servers_status, reqId;
+                END LOOP;
+        END IF;
+    END IF;
+
+
+END;
+$delim$ LANGUAGE plpgsql;
 
 -- Data Follows
 INSERT INTO servers (name, username, password, ipaddress, url, auth_method, auth_token)

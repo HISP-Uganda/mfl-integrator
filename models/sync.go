@@ -11,6 +11,7 @@ type SyncLog struct {
 	ID             dbutils.Int  `db:"id" json:"-"`
 	UID            string       `db:"uid" json:"uid"`
 	MFLID          string       `db:"mflid" json:"MFLID"`
+	BatchID        string       `db:"batchid" json:"BatchID"`
 	Started        time.Time    `db:"started" json:"started"`
 	Stopped        time.Time    `db:"stopped" json:"stopped"`
 	NumberCreated  dbutils.Int  `db:"number_created" json:"numberCreated"`
@@ -25,9 +26,9 @@ type SyncLog struct {
 // LogSync helps to log the sync process
 func (s *SyncLog) LogSync() {
 	db := db2.GetDB()
-	_, err := db.NamedExec(`INSERT INTO sync_log (uid, mflid, started, stopped, number_created, 
+	_, err := db.NamedExec(`INSERT INTO sync_log (uid, mflid, batchid, started, stopped, number_created, 
         number_deleted, number_ignored, number_updated) 
-		VALUES (:uid,:mflid, :started, :stopped, :number_created, :number_deleted, :number_ignored, :number_updated)`, s)
+		VALUES (:uid, :mflid, :batchid, :started, :stopped, :number_created, :number_deleted, :number_ignored, :number_updated)`, s)
 	if err != nil {
 		log.WithError(err).Info("Failed to log synchronisation")
 		return

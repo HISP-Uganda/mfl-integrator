@@ -48,27 +48,40 @@ func main() {
 	go func() {
 		// Create a new scheduler
 		s := gocron.NewScheduler(time.UTC)
-		log.WithFields(log.Fields{"SyncCronExpression": config.MFLIntegratorConf.API.MFLSyncCronExpression}).Info(
-			"Facility Synchronisation Cron Expression")
 		// Schedule the task to run "30 minutes after midn, 4am, 8am, 12pm..., everyday"
-		_, err := s.Cron(config.MFLIntegratorConf.API.MFLSyncCronExpression).Do(FetchFacilitiesByDistrict)
-		// _, err := s.CronWithSeconds("* * * * * *").Do(task)
+		// if --skip-ousync flag is on we ignore
+		if !*config.SkipOUSync {
+			log.WithFields(log.Fields{"SyncCronExpression": config.MFLIntegratorConf.API.MFLSyncCronExpression}).Info(
+				"Facility Synchronisation Cron Expression")
+			_, err := s.Cron(config.MFLIntegratorConf.API.MFLSyncCronExpression).Do(FetchFacilitiesByDistrict)
+			// _, err := s.CronWithSeconds("* * * * * *").Do(task)
+			if err != nil {
+				log.WithError(err).Error("Error scheduling facility sync task:")
+				return
+			}
+		}
+
+		// retrying incomplete requests runs every 5 minutes
+		log.WithFields(log.Fields{"RetryCronExpression": config.MFLIntegratorConf.API.MFLRetryCronExpression}).Info(
+			"Request Retry Cron Expression")
+		_, err = s.Cron(config.MFLIntegratorConf.API.MFLRetryCronExpression).Do(RetryIncompleteRequests)
 		if err != nil {
-			log.WithError(err).Error("Error scheduling task:")
-			return
+			log.WithError(err).Error("Error scheduling incomplete request retry task:")
 		}
 		s.StartAsync()
 	}()
 
 	go func() {
-		LoadOuLevels()
-		LoadOuGroups()
-		LoadLocations() // Load organisation units - before facility in base DHIS2 instance
-		MatchLocationsWithMFL()
-		SyncLocationsToDHIS2Instances()
-		// fetch facilities after initial run, just use a scheduled job.
-		FetchFacilitiesByDistrict()
-		// FetchFacilities("")
+		if !*config.SkipOUSync {
+			LoadOuLevels()
+			LoadOuGroups()
+			LoadLocations() // Load organisation units - before facility in base DHIS2 instance
+			MatchLocationsWithMFL()
+			SyncLocationsToDHIS2Instances()
+			// fetch facilities after initial run, just use a scheduled job.
+			FetchFacilitiesByDistrict()
+		}
+
 	}()
 
 	jobs := make(chan int)
@@ -92,41 +105,6 @@ func main() {
 
 	wg.Wait()
 }
-
-//func getDistricts() []map[string]interface{} {
-//	baseURL := config.MFLIntegratorConf.API.MFLBaseURL
-//	params := url.Values{}
-//	params.Add("resource", "Location")
-//	params.Add("type", "Local Government")
-//	params.Add("_count", "200") // We have less than 200 districts
-//	baseURL += "?" + params.Encode()
-//
-//	body, _ := utils.GetRequest(baseURL)
-//	// fmt.Printf("BODY:%v\n", string(body))
-//	// Read the response body
-//	var districtList []map[string]interface{}
-//	if body != nil {
-//		v, _, _, _ := jsonparser.Get(body, "entry")
-//		var entries []LocationEntry
-//		err := json.Unmarshal(v, &entries)
-//		if err != nil {
-//			fmt.Println("Error unmarshaling response body:", err)
-//			return nil
-//		}
-//
-//		for i := range entries {
-//			district := make(map[string]interface{})
-//			district["id"] = *entries[i].Resource.Id
-//			district["name"] = *entries[i].Resource.Name
-//			district["parent"] = *entries[i].Resource.PartOf.Reference
-//
-//			districtList = append(districtList, district)
-//		}
-//		return districtList
-//	}
-//
-//	return nil
-//}
 
 func startAPIServer(wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -162,7 +140,3 @@ func startAPIServer(wg *sync.WaitGroup) {
 
 	_ = router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
 }
-
-//func LoadAndMatch() {
-//
-//}

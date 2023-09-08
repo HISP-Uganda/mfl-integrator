@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
+	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/buger/jsonparser"
@@ -199,16 +200,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 				}
 				// get server status from request
 				if ccstatusObj, ok := r.CCServersStatus[fmt.Sprintf("%d", ccServerObject.ID())]; ok {
-					//st, err := json.Marshal(ccstatusObj)
-					//if err != nil {
-					//	log.WithError(err).Info("Failed to marshal cc server JSON status object!")
-					//	return false
-					//}
-					//err = json.Unmarshal(st, &ccServerStatus)
-					//if err != nil {
-					//	log.WithError(err).Info("Failed to unmarshal json into CC Status object")
-					//	return false
-					//}
+
 					if val, ok := ccstatusObj.(ServerStatus); ok {
 						ccServerStatus = val
 					}
@@ -385,7 +377,10 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 	for {
 		log.Println("Going to read requests")
 		rows, err := db.Queryx(`
-                SELECT id FROM requests WHERE status = $1  and status_of_dependence(id) IN ('completed', '') ORDER BY created LIMIT 100000
+                SELECT 
+                    id FROM requests 
+                WHERE status = $1  and status_of_dependence(id) IN ('completed', '') 
+                ORDER BY depends_on desc, created LIMIT 100000
                 `, "ready")
 		if err != nil {
 			log.WithError(err).Error("ERROR READING READY REQUESTS!!!")
@@ -399,11 +394,17 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 				log.WithError(err).Error("Error reading request from queue:")
 			}
 
-			go func() {
-				jobs <- requestID
-				seenMap[models.RequestID(requestID)] = true
-				log.Info(fmt.Sprintf("Added Request [id: %v]", requestID))
-			}()
+			go func(req int) {
+				mutex.Lock()
+				defer mutex.Unlock()
+				if _, exists := seenMap[models.RequestID(req)]; exists {
+					mutex.Unlock()
+					return
+				}
+				jobs <- req
+				seenMap[models.RequestID(req)] = true
+				log.Info(fmt.Sprintf("Added Request [id: %v]", req))
+			}(requestID)
 
 		}
 		if err := rows.Err(); err != nil {
@@ -447,12 +448,12 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 		// dest = utils.GetServer(reqObj.Destination)
 		// log.WithFields(log.Fields{"servers": models.ServerMap}).Info("Servers")
 		if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
-			_ = ProcessRequest(tx, reqObj, reqDestination, false)
+			_ = ProcessRequest(tx, reqObj, reqDestination, false, false)
 
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
 					log.WithFields(log.Fields{"CCServerID": item, "ServerIndex=>": index}).Info("!CC Server:")
-					return ProcessRequest(tx, reqObj, ccServer, true)
+					return ProcessRequest(tx, reqObj, ccServer, true, false)
 				} else {
 					log.WithField("ServerID", item).Info("Sever not in Map")
 				}
@@ -463,7 +464,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				log.WithFields(log.Fields{"CCServerID": item, "ServerIndex==>": index}).Info("!!CC Server:")
 				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
-					return ProcessRequest(tx, reqObj, ccServer, true)
+					return ProcessRequest(tx, reqObj, ccServer, true, false)
 				} else {
 					log.WithField("ServerID", item).Info("Sever not in Map>")
 
@@ -480,14 +481,14 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 		delete(seenMap, models.RequestID(req))
 		mutex.Unlock()
 		// delete(RequestsMap, fmt.Sprintf("Req-%d", req))
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
 
 }
 
 // ProcessRequest handles a ready request
-func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, serverInCC bool) error {
-	if reqObj.canSendRequest(tx, destination, serverInCC) {
+func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, serverInCC, skipCheck bool) error {
+	if skipCheck || reqObj.canSendRequest(tx, destination, serverInCC) {
 		log.WithFields(log.Fields{"request": reqObj.ID}).Info("Request can be processed")
 		// send request
 		resp, err := reqObj.sendRequest(destination)
@@ -508,41 +509,60 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 			err := json.Unmarshal(respBody, &result)
 			// err := json.NewDecoder(resp.Body).Decode(&result)
 			if err != nil {
-				reqObj.Status = models.RequestStatusFailed
-				reqObj.StatusCode = "ERROR03"
-				reqObj.Errors = "Failed to decode import summary"
-				reqObj.Retries += 1
-				reqObj.updateRequest(tx)
-				log.WithField("Resp", string(respBody)).WithError(err).Error("Failed to decode import summary")
-				return err
+				if serverInCC {
+					serverStatus := reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())].(map[string]interface{})
+					summary := "Failed to decode import summary"
+					newServerStatus := make(map[string]interface{})
+					newServerStatus["errors"] = summary
+					newServerStatus["status"] = models.RequestStatusFailed
+					newServerStatus["statusCode"] = "ERROR03"
+					newServerStatus["retries"] = serverStatus["retries"].(int) + 1
+					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
+					reqObj.updateCCServerStatus(tx)
+					// _, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
+				} else {
+					reqObj.Status = models.RequestStatusFailed
+					reqObj.StatusCode = "ERROR03"
+					reqObj.Errors = "Failed to decode import summary"
+					reqObj.Retries += 1
+					reqObj.updateRequest(tx)
+					log.WithField("Resp", string(respBody)).WithError(err).Error("Failed to decode import summary")
+					return err
+				}
 			}
 			if resp.StatusCode/100 == 2 {
-				reqObj.withStatus(models.RequestStatusCompleted).updateRequestStatus(tx)
 
 				if serverInCC {
 					serverStatus := reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())].(map[string]interface{})
 					summary := fmt.Sprintf("Created: %d, Updated: %d", result.Response.Stats.Created, result.Response.Stats.Updated)
 					newServerStatus := make(map[string]interface{})
 					newServerStatus["errors"] = summary
-					newServerStatus["status"] = "completed"
+					newServerStatus["status"] = models.RequestStatusCompleted
 					newServerStatus["statusCode"] = fmt.Sprintf("%d", resp.StatusCode)
 					newServerStatus["retries"] = serverStatus["retries"]
 					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
 					// reqObj.updateCCServerStatus(tx)
 					_, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
 
+				} else {
+					summary := fmt.Sprintf("Created: %d, Updated: %d", result.Response.Stats.Created, result.Response.Stats.Updated)
+					reqObj.StatusCode = fmt.Sprintf("%d", resp.StatusCode)
+					reqObj.Errors = summary
+					reqObj.Retries += 1
+					reqObj.updateRequest(tx)
+					reqObj.withStatus(models.RequestStatusCompleted).updateRequestStatus(tx)
 				}
 				log.WithFields(log.Fields{
-					"status":  result.Response.Status,
-					"created": result.Response.Stats.Created,
-					"updated": result.Response.Stats.Updated,
-					"total":   result.Response.Stats.Total,
+					"status":     result.Response.Status,
+					"created":    result.Response.Stats.Created,
+					"updated":    result.Response.Stats.Updated,
+					"total":      result.Response.Stats.Total,
+					"serverDBId": destination.ID(),
 					// "response": string(respBody),
 				}).Info("Request completed successfully!")
 				// reqObj.CCServersStatus.Scan()
 				return nil
 			} else {
-				reqObj.withStatus(models.RequestStatusFailed).updateRequestStatus(tx)
 				log.WithFields(log.Fields{"Request": reqObj.Body, "Response": string(respBody), "ServerInCC": serverInCC}).Warn(
 					"A non 200 response")
 				if serverInCC {
@@ -558,14 +578,13 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					_, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
 
 					// reqObj.updateCCServerStatus(tx)
-					//var ccServerStatusJSON dbutils.MapAnything
-					//err := ccServerStatusJSON.Scan(newServerStatus)
-					//if err != nil {
-					//	log.WithError(err).Error("Failed to convert CC server status to required db type")
-					//} else {
-					//	reqObj.CCServersStatus = ccServerStatusJSON
-					//	reqObj.updateCCServerStatus(tx)
-					//}
+				} else {
+					reqObj.StatusCode = fmt.Sprintf("%d", resp.StatusCode)
+					reqObj.Status = models.RequestStatusFailed
+					reqObj.Errors = "request might have conflicts"
+					reqObj.Retries += 1
+					reqObj.updateRequest(tx)
+					// reqObj.withStatus(models.RequestStatusFailed).updateRequestStatus(tx)
 				}
 			}
 		} else {
@@ -615,4 +634,91 @@ func StartConsumers(jobs <-chan int, wg *sync.WaitGroup, mutex *sync.RWMutex, se
 		go Consume(newConn, i, jobs, wg, mutex, seedMap)
 	}
 	log.WithFields(log.Fields{"MaxConsumers": config.MFLIntegratorConf.Server.MaxConcurrent}).Info("Created Consumers: ")
+}
+
+const incompleteRequestsSQL = `
+	SELECT id, destination, status, retries, failed_cc_servers(cc_servers, cc_servers_status) AS cc_servers, body,
+	       url_suffix, cc_servers_status, object_type, ctype, body_is_query_param
+	FROM requests 
+	WHERE 
+	    ((status IN ('completed', 'failed') AND failed_cc_servers(cc_servers, cc_servers_status) <> '{}')  
+	   	OR status = 'failed') AND suspended = 0 AND status <> 'expired' ORDER by depends_on desc;
+`
+
+// RetryIncompleteRequests is intended to occasionally retry incomplete requests - there could be a success chance
+// this could be scheduled to run every so often
+func RetryIncompleteRequests() {
+	log.Info("..::::::.. Starting to process Incomplete Requests ..::::::..")
+	dbConn := db.GetDB()
+	rows, err := dbConn.Queryx(incompleteRequestsSQL)
+	if err != nil {
+		log.WithError(err).Error("ERROR READING PREVIOUSLY INCOMPLETE REQUESTS!!!")
+		return
+	}
+
+	for rows.Next() {
+		reqObj := RequestObj{}
+		err := rows.StructScan(&reqObj)
+		if err != nil {
+			log.WithError(err).Error("Error reading incomplete request for processing")
+		}
+		log.WithFields(log.Fields{
+			"request-ID": reqObj.ID}).Info("Handling Incomplete Request")
+		tx := dbConn.MustBegin()
+
+		if reqObj.Status == "failed" { // destination server request had failed
+			if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
+				if reqObj.Retries <= config.MFLIntegratorConf.Server.MaxRetries {
+					_ = ProcessRequest(tx, reqObj, reqDestination, false, true)
+				} else {
+					reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
+				}
+
+				lo.Map(reqObj.CCServers, func(item int32, index int) error {
+					if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
+						log.WithFields(log.Fields{"CCServerID": item, "ServerIndex": index}).Info(
+							"- Incomplete Request Retry:")
+						return ProcessRequest(tx, reqObj, ccServer, true, true)
+					} else {
+						log.WithField("ServerID", item).Info("Incomplete Request Retry: Sever not in Map")
+					}
+					return nil
+				})
+			}
+		} else {
+			lo.Map(reqObj.CCServers, func(item int32, index int) error {
+				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
+					log.WithFields(log.Fields{"CCServerID": item, "ServerIndex": index}).Info(
+						"+ Incomplete Request Retry")
+					// get cc server's status
+					var ccServerStatus ServerStatus
+					if ccstatusObj, ok := reqObj.CCServersStatus[fmt.Sprintf("%d", item)]; ok {
+
+						if val, ok := ccstatusObj.(ServerStatus); ok {
+							ccServerStatus = val
+						}
+					}
+
+					// only retry if max retries is not exceeded else expre request
+					if ccServerStatus.Retries <= config.MFLIntegratorConf.Server.MaxRetries {
+						return ProcessRequest(tx, reqObj, ccServer, true, true)
+					} else {
+						reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
+						return nil
+					}
+				} else {
+					log.WithField("ServerID", item).Info("Incomplete Request Retry: Sever not in Map")
+				}
+				return nil
+			})
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			log.WithError(err).Error("Failed to Commit transaction after processing incomplete request!")
+		}
+	}
+	_ = rows.Close()
+
+	log.Info("..:::.. Finished to process incomplete requests ..:::..")
 }

@@ -528,7 +528,7 @@ func CreateBaseDHIS2Server() {
 	metadataServer.s.AllowedSources = []string{"localhost"}
 	metadataServer.s.ParseResponses = true
 	var urlParams dbutils.MapAnything
-	if err := json.Unmarshal([]byte(`{"mergeMode":"REPLACE", "importStrategy": "CREATE_AND_UPDATE","async": false,
+	if err := json.Unmarshal([]byte(`{"mergeMode":"REPLACE", "importStrategy": "CREATE_AND_UPDATE","async": true,
 "importReportMode": "DEBUG"}`), &urlParams); err != nil {
 		log.WithError(err).Error("Failed to unmarshal server URL params")
 		return

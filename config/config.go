@@ -19,6 +19,7 @@ import (
 // MFLIntegratorConf is the global conf
 var MFLIntegratorConf Config
 var ForceSync *bool
+var SkipOUSync *bool
 var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
 
 func init() {
@@ -43,6 +44,7 @@ func init() {
 		"The path to the configuration file of the application")
 
 	ForceSync = flag.Bool("force-sync", false, "Whether to forcefully sync organisation unit hierarchy")
+	SkipOUSync = flag.Bool("skip-ousync", false, "Whether to skip ou and facility sync. But process requests")
 
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()
@@ -167,6 +169,7 @@ type Config struct {
 		MFLCCDHIS2OuGroupAddServers string `mapstructure:"mfl_cc_dhis2_ougroup_add_servers"  env:"MFLINTEGRATOR_CC_DHIS2_OUGROUP_ADD_SERVERS" env-description:"The MFL CC DHIS2 instances APIs used to add ous to groups"`
 		MFLMetadataBatchSize        int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata items to chunk in a metadata request" env-default:"50"`
 		MFLSyncCronExpression       string `mapstructure:"mfl_sync_cron_expression"  env:"MFLINTEGRATOR_SYNC_CRON_EXPRESSION" env-description:"The MFL Health Facility Syncronisation Cron Expression" env-default:"0 0-23/6 * * *"`
+		MFLRetryCronExpression      string `mapstructure:"mfl_retry_cron_expression"  env:"MFLINTEGRATOR_RETRY_CRON_EXPRESSION" env-description:"The MFL request retry Cron Expression" env-default:"*/5 * * * *"`
 		Email                       string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
 		AuthToken                   string `mapstructure:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
 		SmsURL                      string `mapstructure:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`

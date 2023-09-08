@@ -269,7 +269,7 @@ func MatchLocationsWithMFL() {
 }
 
 // FetchFacilities pulls facilities from the MFL after loading and matching
-func FetchFacilities(mflId string) {
+func FetchFacilities(mflId, batchId string) {
 	dbConn := db.GetDB()
 	var upperLevels int64
 	err := dbConn.Get(&upperLevels, "SELECT count(*) FROM organisationunit WHERE hierarchylevel = $1 - 1",
@@ -413,7 +413,7 @@ func FetchFacilities(mflId string) {
 					Source: "localhost", Destination: "base_OU", ContentType: "application/json",
 					Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
 					Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: facility.UID,
-					BatchID: "", SubmissionID: "",
+					BatchID: batchId, SubmissionID: "", District: mflId,
 					CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2CreateServers, ","),
 					Body:      string(reqBody), ObjectType: "ORGANISATION_UNIT", ReportType: "OU",
 				}
@@ -430,6 +430,10 @@ func FetchFacilities(mflId string) {
 					requestForms := MakeOrgunitGroupsAdditionRequests(
 						ouGroupRequests, dbutils.Int(fRequest.ID()), facilityMetadata.UID)
 					for _, rForm := range requestForms {
+						if rForm.Source == "" {
+							continue
+						}
+						rForm.BatchID = batchId // set the BatchID here
 						_, err := rForm.Save(dbConn)
 						if err != nil {
 							log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
@@ -474,6 +478,7 @@ func FetchFacilities(mflId string) {
 					// Generate Metadata Update object - for facility with valid UID
 					if facility.ValidateUID() {
 						reqF := GenerateUpdateMetadataRequest(metadataPayload)
+						reqF.BatchID = batchId
 						_, err := reqF.Save(dbConn)
 						if err != nil {
 							log.WithError(err).WithFields(log.Fields{"OU": reqF.UID}).Error(
@@ -494,6 +499,7 @@ func FetchFacilities(mflId string) {
 		UID:           utils.GetUID(),
 		Started:       startTime,
 		MFLID:         mflId,
+		BatchID:       batchId,
 		Stopped:       endTime,
 		NumberCreated: dbutils.Int(numberCreated),
 		NumberUpdated: dbutils.Int(numberUpdated),
@@ -513,10 +519,11 @@ const districtSQL = `SELECT mflid FROM organisationunit WHERE hierarchylevel =
 // FetchFacilitiesByDistrict fetches Facilities from MFL by district - if we don't get mflids then fetch everything
 func FetchFacilitiesByDistrict() {
 	log.Info("Going to Fetch Facilities By District")
+	batchId := utils.GetUID()
 	rows, err := db.GetDB().Queryx(districtSQL)
 	if err != nil {
 		log.WithError(err).Info("Failed to get district mflids from database")
-		FetchFacilities("")
+		FetchFacilities("", batchId)
 		return
 	}
 	for rows.Next() {
@@ -526,7 +533,7 @@ func FetchFacilitiesByDistrict() {
 			log.WithError(err).Error("Error reading district mflid from database:")
 			continue
 		}
-		FetchFacilities(district)
+		FetchFacilities(district, batchId)
 	}
 	_ = rows.Close()
 }
@@ -567,6 +574,18 @@ func getPhoneAndEmail(telecom []fhir.ContactPoint) (string, string) {
 		}
 	}
 	return phone, email
+}
+
+func SanitizeShortName(name string) string {
+	if len(name) <= 50 {
+		return name
+	}
+	newName := strings.ReplaceAll(name, "Health Centre", "HC")
+	newName = strings.ReplaceAll(newName, "Hospital", "")
+	if len(newName) <= 50 {
+		return newName
+	}
+	return newName[:50]
 }
 
 // GetOrgUnitFromFHIRLocation is used to generate DHIS2 OrganisationUnit from FHIR Location
@@ -621,7 +640,7 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	facility.ID = historicalId
 	facility.UID = historicalId
 	facility.Name = name
-	facility.ShortName = name
+	facility.ShortName = SanitizeShortName(name)
 	facility.URL = _url
 	facility.MFLID = id
 	facility.MFLUID = mflUniqueIdentifier
@@ -670,7 +689,7 @@ func CreateOrgUnitGroupPayload(ou models.MetadataOu) map[string][]byte {
 // MakeOrgunitGroupsAdditionRequests ....
 func MakeOrgunitGroupsAdditionRequests(
 	ouGroupPayloads map[string][]byte, dependency dbutils.Int, facilityUID string) []models.RequestForm {
-	requests := make([]models.RequestForm, len(ouGroupPayloads))
+	var requests []models.RequestForm
 	for k, v := range ouGroupPayloads {
 		if len(k) == 0 {
 			continue
