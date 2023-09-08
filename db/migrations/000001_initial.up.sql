@@ -242,6 +242,7 @@ CREATE TABLE sync_log(
     id BIGSERIAL PRIMARY KEY,
     uid VARCHAR(11) NOT NULL DEFAULT '',
     mflid TEXT,
+    batchid TEXT,
     started TIMESTAMPTZ,
     stopped TIMESTAMPTZ,
     number_created INTEGER,
