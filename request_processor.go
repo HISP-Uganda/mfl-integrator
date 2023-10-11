@@ -369,12 +369,14 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 
 // var RequestsMap = make(map[string]int)
 
-//Produce gets all the ready requests in the queue
+// Produce gets all the ready requests in the queue
 func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex, seenMap map[models.RequestID]bool) {
 	defer wg.Done()
 	log.Println("Producer staring:!!!")
+
 	// RequestsMap[""] = 6
 	for {
+
 		log.Println("Going to read requests")
 		rows, err := db.Queryx(`
                 SELECT 
@@ -395,6 +397,13 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 			}
 
 			go func(req int) {
+				// Let see if we can recover from panics XXX
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Println("Recovered in Produce", r)
+
+					}
+				}()
 				mutex.Lock()
 				defer mutex.Unlock()
 				if _, exists := seenMap[models.RequestID(req)]; exists {
@@ -516,7 +525,7 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					newServerStatus["errors"] = summary
 					newServerStatus["status"] = models.RequestStatusFailed
 					newServerStatus["statusCode"] = "ERROR03"
-					newServerStatus["retries"] = serverStatus["retries"].(int) + 1
+					newServerStatus["retries"] = int(serverStatus["retries"].(float64) + 1)
 					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
 					reqObj.updateCCServerStatus(tx)
 					// _, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
@@ -571,7 +580,7 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					newServerStatus := make(map[string]interface{})
 					newServerStatus["status"] = "failed"
 					newServerStatus["statusCode"] = fmt.Sprintf("%d", resp.StatusCode)
-					retries := serverStatus["retries"].(float64) + 1
+					retries := int(serverStatus["retries"].(float64) + 1)
 					newServerStatus["retries"] = retries
 					newServerStatus["errors"] = "server possibly unreachable"
 					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus

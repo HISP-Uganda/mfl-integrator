@@ -181,7 +181,7 @@ func GetWithBasicAuth(
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
-	client := &http.Client{Transport: tr}
+	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -221,7 +221,7 @@ func PostWithBasicAuth(
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
-	client := &http.Client{Transport: tr}
+	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
 
 	resp, err := client.Do(req)
 	if err != nil {

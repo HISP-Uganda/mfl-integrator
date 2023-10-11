@@ -25,6 +25,21 @@ CREATE TABLE orgunitgroup(
 );
 CREATE INDEX orgunitgroup_name_idx ON orgunitgroup(id);
 
+CREATE TABLE attribute (
+    id SERIAL NOT NULL PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE ,
+    code VARCHAR(50)  UNIQUE,
+    name VARCHAR(230) NOT NULL UNIQUE ,
+    shortname VARCHAR(50) NOT NULL DEFAULT '',
+    valuetype VARCHAR(50) NOT NULL DEFAULT '',
+    isunique BOOLEAN NOT NULL DEFAULT FALSE,
+    mandatory BOOLEAN NOT NULL DEFAULT FALSE,
+    organisationunitattribute BOOLEAN NOT NULL,
+    created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+
+);
+
 CREATE TABLE organisationunit(
     id BIGSERIAL NOT NULL PRIMARY KEY,
     uid TEXT NOT NULL UNIQUE,
@@ -40,7 +55,7 @@ CREATE TABLE organisationunit(
     url TEXT NOT NULL DEFAULT '',
     phonenumber TEXT NOT NULL DEFAULT '',
     extras JSONB NOT NULL DEFAULT '{}'::jsonb,
-    attributevalues JSONB NOT NULL DEFAULT '{}'::jsonb,
+    attributevalues JSONB DEFAULT '{}'::jsonb,
     mflid TEXT,
     mfluid TEXT,
     mflparent TEXT,

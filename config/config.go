@@ -163,6 +163,7 @@ type Config struct {
 		MFLDHIS2PAT                 string `mapstructure:"mfl_dhis2_pat"  env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The MFL base DHIS2  Personal Access Token"`
 		MFLDHIS2TreeIDs             string `mapstructure:"mfl_dhis2_tree_ids"  env:"MFLINTEGRATOR_DHIS2_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level ids"`
 		MFLDHIS2FacilityLevel       int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities" env-default:"5"`
+		MFLDHIS2OUMFLIDAttributeID  string `mapstructure:"mfl_dhis2_ou_mflid_attribute_id" env:"MFLINTEGRATOR_DHIS2_OU_MFLID_ATTRIBUTE_ID" env-description:"The DHIS2 OU MFLID Attribute ID"`
 		MFLCCDHIS2Servers           string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
 		MFLCCDHIS2HierarchyServers  string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
 		MFLCCDHIS2CreateServers     string `mapstructure:"mfl_cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`

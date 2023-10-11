@@ -120,3 +120,15 @@ FROM %s
 //	return c.
 //
 //}
+
+type AttributeController struct{}
+
+func (at *AttributeController) SyncAttributes(c *gin.Context) {
+	serverName := c.Param("server")
+	result := make(chan gin.H)
+	go func() {
+		models.SyncAttributesToServer(serverName)
+		result <- gin.H{"message": "Attributes Syncing in background"}
+	}()
+	c.AbortWithStatusJSON(http.StatusOK, <-result)
+}

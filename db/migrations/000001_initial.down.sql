@@ -15,6 +15,7 @@ DROP TABLE IF EXISTS orgunitgroupmembers;
 DROP TABLE IF EXISTS organisationunit ;
 DROP TABLE IF EXISTS orgunitgroup;
 DROP TABLE IF EXISTS orgunitlevel;
+DROP TABLE IF EXISTS attribute;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS user_role_permissions;
 DROP TABLE IF EXISTS user_roles;

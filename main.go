@@ -75,6 +75,7 @@ func main() {
 		if !*config.SkipOUSync {
 			LoadOuLevels()
 			LoadOuGroups()
+			LoadAttributes()
 			LoadLocations() // Load organisation units - before facility in base DHIS2 instance
 			MatchLocationsWithMFL()
 			SyncLocationsToDHIS2Instances()
@@ -131,6 +132,9 @@ func startAPIServer(wg *sync.WaitGroup) {
 
 		ot := new(controllers.OrgUnitTreeController)
 		v2.GET("/outree/:server", ot.CreateOrgUnitTree)
+
+		at := new(controllers.AttributeController)
+		v2.GET("/syncAttributes/:server", at.SyncAttributes)
 
 	}
 	// Handle error response when a route is not defined

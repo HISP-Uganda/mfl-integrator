@@ -1,6 +1,6 @@
 module github.com/HISP-Uganda/mfl-integrator
 
-go 1.18
+go 1.21.1
 
 require (
 	github.com/buger/jsonparser v1.1.1

@@ -28,6 +28,7 @@ type MetadataOu struct {
 	Parent                 dbutils.Map   `db:"parent" json:"parent,omitempty"`
 	Geometry               dbutils.Map   `db:"geometry" json:"geometry"`
 	OrganisationUnitGroups []dbutils.Map `json:"organisationUnitGroups,omitempty"`
+	AttributeValues        []dbutils.Map `json:"attributeValues,omitempty"`
 }
 
 type MetadataOuLevel struct {
@@ -60,6 +61,18 @@ func GenerateOuLevelMetadata() []MetadataOuLevel {
 	return ouLevels
 }
 
+type AttributeMetadata struct {
+	ID                        string `db:"id" json:"-"`
+	UID                       string `db:"uid" json:"id"`
+	Code                      string `db:"code" json:"code,omitempty"`
+	Name                      string `db:"name" json:"name"`
+	ShortName                 string `db:"shortname" json:"shortName"`
+	ValueType                 string `db:"valuetype" json:"valueType,omitempty"`
+	Mandatory                 bool   `db:"mandatory" json:"mandatory"`
+	Unique                    bool   `db:"isunique" json:"unique"`
+	OrganisationUnitAttribute bool   `db:"organisationunitattribute" json:"organisationUnitAttribute,omitempty"`
+}
+
 // GenerateOuGroupsMetadata ...
 func GenerateOuGroupsMetadata() []MetadataOuGroup {
 	var ouGroups []MetadataOuGroup
@@ -71,6 +84,22 @@ func GenerateOuGroupsMetadata() []MetadataOuGroup {
 		return nil
 	}
 	return ouGroups
+}
+
+// GenerateAttributeMetadata ...
+func GenerateAttributeMetadata() []AttributeMetadata {
+	var attributes []AttributeMetadata
+	dbConn := db.GetDB()
+
+	err := dbConn.Select(&attributes, `
+	SELECT uid,name, case when code is null then '' else code end, shortname, valueType, organisationunitattribute,
+	       mandatory, isunique
+	FROM attribute`)
+	if err != nil {
+		log.WithError(err).Error("Failed to generate Organisation Units Attribute Metadata")
+		return attributes
+	}
+	return attributes
 }
 
 // sendMetadata .....

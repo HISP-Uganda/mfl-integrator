@@ -116,6 +116,59 @@ func (og *OrgUnitGroup) NewOrgUnitGroup() {
 	}
 }
 
+type Attribute struct {
+	ID                                string `db:"id" json:"id"`
+	UID                               string `db:"uid" json:"uid,omitempty"`
+	Code                              string `db:"code" json:"code,omitempty"`
+	Name                              string `db:"name" json:"name,omitempty"`
+	ShortName                         string `db:"shortname" json:"shortName,omitempty"`
+	ValueType                         string `db:"valuetype" json:"valueType,omitempty"`
+	Unique                            bool   `db:"isunique" json:"unique,omitempty"`
+	Mandatory                         bool   `db:"mandatory" json:"mandatory"`
+	OrganisationUnitAttribute         bool   `db:"organisationunitattribute" json:"organisationUnitAttribute,omitempty"`
+	OrganisationUnitGroupAttribute    bool   `db:"organisationunitgroupattribute" json:"organisationUnitGroupAttribute,omitempty"`
+	OrganisationUnitGroupSetAttribute bool   `db:"organisationunitgroupsetattribute" json:"organisationUnitGroupSetAttribute,omitempty"`
+	Created                           string `db:"created" json:"created,omitempty"`
+	Updated                           string `db:"updated" json:"updated,omitempty"`
+}
+
+type AttributeValue struct {
+	Value     string    `json:"value"`
+	Attribute Attribute `json:"attribute"`
+}
+
+const insertAttributeSQL = `
+INSERT INTO attribute(uid, name, shortname, valuetype, mandatory, isunique, organisationunitattribute, created, updated)
+VALUES(:uid, :name, :shortname, :valuetype, :mandatory, :isunique, :organisationunitattribute, NOW(), NOW())
+`
+
+func (at *Attribute) NewAttribute() {
+	dbConn := db.GetDB()
+	_, err := dbConn.NamedExec(insertAttributeSQL, at)
+	if err != nil {
+		log.WithError(err).Error("Failed to insert Attribute")
+	}
+}
+
+func (at *Attribute) ExistsInDB() bool {
+	dbConn := db.GetDB()
+	var count int
+	err := dbConn.Get(&count, "SELECT count(*) FROM attribute WHERE uid = $1", at.UID)
+	if err != nil {
+		log.WithError(err).Info("Error reading organisation unit attribute:")
+		return false
+	}
+	return count > 0
+}
+
+func (at *Attribute) UpdateCode(code string) {
+	dbConn := db.GetDB()
+	_, err := dbConn.NamedExec(`UPDATE attribute SET code = :code WHERE uid = :uid`, at)
+	if err != nil {
+		log.WithError(err).Error("Error updating attrinute code")
+	}
+}
+
 type OrganisationUnit struct {
 	ID               string              `db:"id" json:"id"`
 	UID              string              `db:"uid" json:"uid"`
@@ -138,7 +191,7 @@ type OrganisationUnit struct {
 	ClosedDate       string              `db:"closeddate" json:"closedDate,omitempty"`
 	Deleted          bool                `db:"deleted" json:"deleted,omitempty"`
 	Extras           dbutils.MapAnything `db:"extras" json:"extras,omitempty"`
-	AttributeValues  dbutils.MapAnything `db:"attributevalues" json:"attributeValues,omitempty"`
+	AttributeValues  dbutils.JSON        `db:"attributevalues" json:"attributeValues,omitempty"`
 	LastSyncDate     string              `db:"lastsyncdate" json:"lastSyncDate,omitempty"`
 	Geometry         Geometry            `db:"geometry" json:"geometry,omitempty"`
 	Created          string              `db:"created" json:"created,omitempty"`
@@ -298,9 +351,9 @@ func (o *OrganisationUnit) OrganisationUnitDBFields() []string {
 
 const insertOrgUnitSQL = `
 INSERT INTO organisationunit (uid,name, shortname,path, parentid, hierarchylevel,address,
-        email,phonenumber,url,mflid,extras,openingdate, created, updated)
+        email,phonenumber,url,mflid,extras,attributevalues, openingdate, created, updated)
 VALUES (:uid, :name,  :shortname, :path, ou_paraent_from_path(:path, :hierarchylevel), 
-        :hierarchylevel, :address, :email, :phonenumber, :url, :mflid, :extras, :openingdate, now(), now())
+        :hierarchylevel, :address, :email, :phonenumber, :url, :mflid, :extras, :attributevalues, :openingdate, now(), now())
 RETURNING id
 `
 
@@ -381,7 +434,7 @@ func (o *OrganisationUnit) UpdateMFLID(mflID string) {
 func (o *OrganisationUnit) UpdateMFLUID(mflUID string) {
 	dbConn := db.GetDB()
 	o.MFLUID = mflUID
-	_, err := dbConn.NamedExec(`UPDATE organisationunit SET mfluid = :mflid WHERE uid = :uid`, o)
+	_, err := dbConn.NamedExec(`UPDATE organisationunit SET mfluid = :mfluid WHERE uid = :uid`, o)
 	if err != nil {
 		log.WithError(err).Error("Error updating organisation MFLUID")
 	}

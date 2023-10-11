@@ -118,6 +118,50 @@ func LoadOuGroups() {
 	}
 }
 
+// LoadAttributes fetches OU related attributes from DHIS2 to our DB
+func LoadAttributes() {
+	apiURL := config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/attributes.json"
+	p := url.Values{}
+	fields := `id~rename(uid),name,displayName,code,shortName,valueType`
+	p.Add("fields", fields)
+	p.Add("paging", "false")
+	p.Add("filter", "organisationUnitAttribute:eq:true")
+	attrURL := apiURL + "?" + p.Encode()
+	resp, err := utils.GetWithBasicAuth(attrURL, config.MFLIntegratorConf.API.MFLDHIS2User,
+		config.MFLIntegratorConf.API.MFLDHIS2Password)
+	if err != nil {
+		log.WithError(err).Info("Failed to fetch organisation unit attributes")
+		return
+	}
+
+	v, _, _, err := jsonparser.Get(resp, "attributes")
+	if err != nil {
+		log.WithError(err).Error("json parser failed to get attributes key")
+		return
+	}
+	var attributes []models.Attribute
+	err = json.Unmarshal(v, &attributes)
+	if err != nil {
+		log.WithError(err).Error("Error unmarshalling attributes to attribute list:")
+		return
+	}
+	for _, attribute := range attributes {
+		if attribute.ExistsInDB() {
+			log.WithFields(log.Fields{
+				"uid": attribute.UID, "name": attribute.Name}).Info("Attribute Exists in DB")
+		} else {
+			log.WithFields(log.Fields{
+				"uid": attribute.UID, "name": attribute.Name}).Info("Creating OU attribute:")
+			attribute.OrganisationUnitAttribute = true
+			attribute.NewAttribute()
+			if len(attribute.Code) > 0 {
+				attribute.UpdateCode(attribute.Code)
+			}
+		}
+	}
+
+}
+
 // LoadLocations populates organisation units in our DB from base DHIS2
 func LoadLocations() {
 	var id int
@@ -652,6 +696,18 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	facility.PhoneNumber = phone
 	facility.Email = email
 	facility.Extras = extensions
+
+	attV := []models.AttributeValue{{Value: mflUniqueIdentifier, Attribute: models.Attribute{
+		ID: config.MFLIntegratorConf.API.MFLDHIS2OUMFLIDAttributeID,
+		// Name: "",
+	}}}
+	// attributeList = append(attributeList, )
+	attributeValues, err := json.Marshal(attV)
+	if err == nil {
+		facility.AttributeValues = attributeValues
+	} else {
+		log.WithError(err).Info("Failed to marshal attribute values")
+	}
 
 	if lat.String() != "0.0" && long.String() != "0.0" {
 		facility.Geometry = models.Geometry{Type: "Point", Coordinates: coordinateBytes}

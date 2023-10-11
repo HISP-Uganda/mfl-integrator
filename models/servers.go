@@ -623,6 +623,12 @@ func SyncLocationsToServer(serverName string) {
 		groupsPayload["organisationUnitGroups"] = syncOuGroups
 		SendMetadata(server, groupsPayload)
 
+		// send Attributes
+		syncAttributes := GenerateAttributeMetadata()
+		attributesPayload := make(map[string][]AttributeMetadata)
+		attributesPayload["attributes"] = syncAttributes
+		SendMetadata(server, attributesPayload)
+
 		// Send Ous
 		// for level := 1; level < 3; level++ {
 		for level := 1; level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; level++ {
@@ -659,4 +665,17 @@ func SyncLocationsToServer(serverName string) {
 		}
 
 	}
+}
+
+func SyncAttributesToServer(serverName string) {
+	server, err := GetServerByName(serverName)
+	if err != nil {
+		log.WithError(err).Info("Could not proceed to send attributes to server")
+	}
+
+	// send Attributes
+	syncAttributes := GenerateAttributeMetadata()
+	attributesPayload := make(map[string][]AttributeMetadata)
+	attributesPayload["attributes"] = syncAttributes
+	SendMetadata(server, attributesPayload)
 }
