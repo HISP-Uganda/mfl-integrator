@@ -52,6 +52,7 @@ type RequestObj struct {
 	CCServers          pq.Int32Array        `db:"cc_servers" json:"CCServers"`
 	CCServersStatus    dbutils.MapAnything  `db:"cc_servers_status" json:"CCServersStatus"`
 	Body               string               `db:"body"`
+	Response           string               `db:"response"`
 	Retries            int                  `db:"retries"`
 	InSubmissionPeriod bool                 `db:"in_submission_period"`
 	ContentType        string               `db:"ctype"`
@@ -66,8 +67,8 @@ type RequestObj struct {
 }
 
 const updateRequestSQL = `
-UPDATE requests SET (status, statuscode, errors, retries, updated)
-	= (:status, :statuscode, :errors, :retries, current_timestamp) WHERE id = :id
+UPDATE requests SET (status, statuscode, errors, retries, response, updated)
+	= (:status, :statuscode, :errors, :retries, :response, current_timestamp) WHERE id = :id
 `
 const updateStatusSQL = `
 	UPDATE requests SET (status,  updated) = (:status, current_timestamp)
@@ -98,6 +99,7 @@ func (r *RequestObj) updateRequest(tx *sqlx.Tx) {
 	if err != nil {
 		log.WithError(err).Error("Error updating request status")
 	}
+
 	// _ = db.Commit()
 }
 
@@ -124,25 +126,36 @@ func (r *RequestObj) withStatus(s models.RequestStatus) *RequestObj { r.Status =
 // canSendRequest checks if a queued request is eligible for sending
 // based on constraints on request and the receiving servers
 func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInCC bool) bool {
+	reason := ""
+	log.WithField("Reason", reason)
 	if !config.MFLIntegratorConf.Server.SyncOn {
-		log.Info("Synchronisation turned of. Set sync_on to true activate")
+		reason = "Synchronisation turned off."
+		log.Info("Synchronisation turned off. Set sync_on to true activate")
 		return false // helps to globally turn off sync and debug
 	}
 
 	if r.HasDependency() {
 		if !r.DependencyCompleted(tx) {
+			reason = "Dependency incomplete."
 			return false
 		}
 	}
 	if !serverInCC {
 		// check if we have exceeded retries
 		if r.Retries > config.MFLIntegratorConf.Server.MaxRetries {
+			reason = "Max retries exceeded."
 			r.Status = models.RequestStatusExpired
 			r.updateRequestStatus(tx)
+			log.WithFields(log.Fields{
+				"requestID": r.ID,
+				"retries":   r.Retries,
+				"reason":    reason,
+			}).Info("Cannot send request")
 			return false
 		}
 		// check if we're  suspended
 		if server.Suspended() {
+			reason = "Destination server is suspended."
 			log.WithFields(log.Fields{
 				"server": server.ID(),
 				"name":   server.Name(),
@@ -151,6 +164,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 		}
 		// check if we're out of submission period
 		if !r.InSubmissionPeriod {
+			reason = "Destination server out of submission period."
 			log.WithFields(log.Fields{
 				"server": server.ID,
 				"name":   server.Name,
@@ -159,6 +173,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 		}
 		// check if this request is  blacklisted
 		if r.Suspended {
+			reason = "Request blacklisted."
 			r.Errors = "Blacklisted"
 			r.StatusCode = "ERROR7"
 			r.Retries += 1
@@ -171,6 +186,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 		}
 		// check if body is empty
 		if len(strings.TrimSpace(r.Body)) == 0 {
+			reason = "Request has empty body."
 			r.Status = models.RequestStatusFailed
 			r.StatusCode = "ERROR1"
 			r.Errors = "Request has empty body"
@@ -292,7 +308,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 			}
 		}
 
-		return false
+		return true
 	}
 
 }
@@ -387,15 +403,22 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 		if err != nil {
 			log.WithError(err).Error("ERROR READING READY REQUESTS!!!")
 		}
-
+		requestsCount := 0
 		for rows.Next() {
+
+			requestsCount += 1
 			var requestID int
 			err := rows.Scan(&requestID)
 			if err != nil {
 				// log.Fatalln("==>", err)
 				log.WithError(err).Error("Error reading request from queue:")
 			}
-
+			mutex.Lock()
+			if _, exists := seenMap[models.RequestID(requestID)]; exists {
+				log.WithField("requestID", requestID).Info("Request already in dynamic queue")
+				continue
+			}
+			mutex.Unlock()
 			go func(req int) {
 				// Let see if we can recover from panics XXX
 				defer func() {
@@ -406,10 +429,10 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 				}()
 				mutex.Lock()
 				defer mutex.Unlock()
-				if _, exists := seenMap[models.RequestID(req)]; exists {
-					mutex.Unlock()
-					return
-				}
+				//if _, exists := seenMap[models.RequestID(req)]; exists {
+				//	log.WithField("requestID", req).Info("Request already in dynamic queue")
+				//	return
+				//}
 				jobs <- req
 				seenMap[models.RequestID(req)] = true
 				log.Info(fmt.Sprintf("Added Request [id: %v]", req))
@@ -421,7 +444,7 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 		}
 		_ = rows.Close()
 
-		log.Info("Fetch Requests")
+		log.WithField("requestsAdded", requestsCount).Info("Fetched Requests")
 		log.Info(fmt.Sprintf("Going to sleep for: %v", config.MFLIntegratorConf.Server.RequestProcessInterval))
 		// Not good enough but let's bare with the sleep this initial version
 		time.Sleep(
@@ -451,8 +474,8 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 			log.WithError(err).Error("Error reading request for processing")
 		}
 		log.WithFields(log.Fields{
-			"worker":     worker,
-			"request-ID": req}).Info("Handling Request")
+			"worker":    worker,
+			"requestID": req}).Info("Handling Request")
 		/* Work on the request */
 		// dest = utils.GetServer(reqObj.Destination)
 		// log.WithFields(log.Fields{"servers": models.ServerMap}).Info("Servers")
@@ -488,6 +511,11 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 		}
 		mutex.Lock()
 		delete(seenMap, models.RequestID(req))
+		log.WithFields(log.Fields{
+			"requestID":     req,
+			"seenMapLength": len(seenMap),
+			// "senMap":        seenMap,
+		}).Info("Consumer done with request.")
 		mutex.Unlock()
 		// delete(RequestsMap, fmt.Sprintf("Req-%d", req))
 		time.Sleep(1 * time.Second)
@@ -498,7 +526,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 // ProcessRequest handles a ready request
 func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, serverInCC, skipCheck bool) error {
 	if skipCheck || reqObj.canSendRequest(tx, destination, serverInCC) {
-		log.WithFields(log.Fields{"request": reqObj.ID}).Info("Request can be processed")
+		log.WithFields(log.Fields{"requestID": reqObj.ID}).Info("Request can be processed")
 		// send request
 		resp, err := reqObj.sendRequest(destination)
 		if err != nil {
@@ -558,6 +586,7 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					reqObj.StatusCode = fmt.Sprintf("%d", resp.StatusCode)
 					reqObj.Errors = summary
 					reqObj.Retries += 1
+					reqObj.Status = models.RequestStatusCompleted
 					reqObj.updateRequest(tx)
 					reqObj.withStatus(models.RequestStatusCompleted).updateRequestStatus(tx)
 				}
@@ -567,21 +596,27 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					"updated":    result.Response.Stats.Updated,
 					"total":      result.Response.Stats.Total,
 					"serverDBId": destination.ID(),
+					"requestID":  reqObj.ID,
 					// "response": string(respBody),
 				}).Info("Request completed successfully!")
 				// reqObj.CCServersStatus.Scan()
 				return nil
 			} else {
-				log.WithFields(log.Fields{"Request": reqObj.Body, "Response": string(respBody), "ServerInCC": serverInCC}).Warn(
-					"A non 200 response")
+				log.WithFields(log.Fields{
+					"requestID": reqObj.ID, "responseStatus": resp.StatusCode, "ServerInCC": serverInCC,
+				}).Warn("A non 200 response")
 				if serverInCC {
 					serverStatus := reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())].(map[string]interface{})
 					// summary := fmt.Sprintf("Created: 0, Updated: 0")
 					newServerStatus := make(map[string]interface{})
 					newServerStatus["status"] = "failed"
 					newServerStatus["statusCode"] = fmt.Sprintf("%d", resp.StatusCode)
-					retries := int(serverStatus["retries"].(float64) + 1)
-					newServerStatus["retries"] = retries
+					switch serverStatus["retries"].(type) {
+					case float64:
+						newServerStatus["retries"] = int(serverStatus["retries"].(float64) + 1)
+					case int:
+						newServerStatus["retries"] = serverStatus["retries"].(int) + 1
+					}
 					newServerStatus["errors"] = "server possibly unreachable"
 					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
 					_, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
@@ -592,6 +627,7 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					reqObj.Status = models.RequestStatusFailed
 					reqObj.Errors = "request might have conflicts"
 					reqObj.Retries += 1
+					reqObj.Response = string(respBody)
 					reqObj.updateRequest(tx)
 					// reqObj.withStatus(models.RequestStatusFailed).updateRequestStatus(tx)
 				}
@@ -620,7 +656,10 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 			log.WithError(err).Error("Failed to close response body")
 		}
 	} else {
-		log.Info("Cannot process request now!")
+		log.WithFields(log.Fields{
+			"requestID": reqObj.ID,
+			"skipCheck": skipCheck,
+		}).Info("Cannot process request now!")
 	}
 	return nil
 }
@@ -672,7 +711,7 @@ func RetryIncompleteRequests() {
 			log.WithError(err).Error("Error reading incomplete request for processing")
 		}
 		log.WithFields(log.Fields{
-			"request-ID": reqObj.ID}).Info("Handling Incomplete Request")
+			"requestID": reqObj.ID}).Info("Handling Incomplete Request")
 		tx := dbConn.MustBegin()
 
 		if reqObj.Status == "failed" { // destination server request had failed

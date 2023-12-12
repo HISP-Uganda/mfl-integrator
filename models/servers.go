@@ -49,17 +49,19 @@ func init() {
 	ServerMap = make(map[string]Server)
 	ServerMapByName = make(map[string]Server)
 	for rows.Next() {
-		srv := &Server{}
+		srv := Server{}
 
 		err := rows.StructScan(&srv.s)
 		if err != nil {
 			log.Fatalln("Server Loading ==>", err)
 		}
-		// fmt.Printf("=>>>>>>%#v", s)
-		ServerMap[strconv.Itoa(int(srv.s.ID))] = *srv
-		ServerMapByName[srv.s.Name] = *srv
+
+		ServerMap[strconv.Itoa(int(srv.s.ID))] = srv
+		ServerMapByName[srv.s.Name] = srv
+		// log.WithField("SERVER", srv.s).Info("=====>")
 
 	}
+	log.WithField("ServerMapByName", ServerMapByName).Info("========>")
 	_ = rows.Close()
 }
 
@@ -73,7 +75,7 @@ type ServerID int64
 // Server is our user object
 type Server struct {
 	s struct {
-		ID                      ServerID            `db:"id" json:"-"`
+		ID                      ServerID            `db:"id" json:"id"`
 		UID                     string              `db:"uid" json:"uid,omitempty"`
 		Name                    string              `db:"name" json:"name" validate:"required"`
 		Username                string              `db:"username" json:"username"`
@@ -428,7 +430,7 @@ func CreateServerFromJSON(db *sqlx.DB, serverJSON []byte) (Server, error) {
 			return *srv, err
 		}
 		log.WithField("ServerUID", srv.s.UID).Info("Updating server!")
-		return *srv, nil
+		return GetServerByName(srv.Name())
 	} else {
 		// create server
 		srv.SetUID(utils.GetUID())

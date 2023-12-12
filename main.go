@@ -19,6 +19,15 @@ func init() {
 	formatter := new(log.TextFormatter)
 	formatter.TimestampFormat = time.RFC3339
 	formatter.FullTimestamp = true
+
+	//file, err := os.OpenFile(
+	//	config.MFLIntegratorConf.Server.LogDirectory+string(os.PathSeparator)+"server.log",
+	//	os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//log.SetOutput(io.MultiWriter(os.Stdout, file))
+	// defer file.Close()
 	log.SetFormatter(formatter)
 	log.SetOutput(os.Stdout)
 }
@@ -92,13 +101,17 @@ func main() {
 	mutex := &sync.Mutex{}
 	rWMutex := &sync.RWMutex{}
 
-	// Start the producer goroutine
-	wg.Add(1)
-	go Produce(dbConn, jobs, &wg, mutex, seenMap)
+	if !*config.SkipRequestProcessing {
+		// don't produce anything if skip processing is enabled
 
-	// Start the consumer goroutine
-	wg.Add(1)
-	go StartConsumers(jobs, &wg, rWMutex, seenMap)
+		// Start the producer goroutine
+		wg.Add(1)
+		go Produce(dbConn, jobs, &wg, mutex, seenMap)
+
+		// Start the consumer goroutine
+		wg.Add(1)
+		go StartConsumers(jobs, &wg, rWMutex, seenMap)
+	}
 
 	// Start the backend API gin server
 	wg.Add(1)

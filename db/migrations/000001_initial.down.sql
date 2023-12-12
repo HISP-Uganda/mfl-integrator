@@ -27,6 +27,12 @@ DROP FUNCTION IF EXISTS xml_pretty ( text);
 DROP FUNCTION IF EXISTS in_submission_period ( integer);
 DROP FUNCTION IF EXISTS get_server_apps (integer);
 DROP FUNCTION IF EXISTS is_allowed_source (integer, integer);
+DROP FUNCTION IF EXISTS jsonb_diff_val(jsonb, jsonb);
+DROP FUNCTION IF EXISTS create_requests_cc_status(integer[]);
+DROP FUNCTION IF EXISTS after_request_insert_trigger_function();
+DROP FUNCTION IF EXISTS status_of_dependence(bigint);
+DROP FUNCTION IF EXISTS failed_cc_servers(integer[], jsonb);
+DROP FUNCTION IF EXISTS reset_request_cc_server_retries(bigint, integer[]);
 
 
 DROP EXTENSION IF EXISTS xml2;

@@ -199,17 +199,47 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 }
 
 func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
-	reqForm := &RequestForm{}
-
+	// reqForm := RequestForm{}
 	req := &Request{}
-	r := &req.r
+	// r := &req.r
+	src := c.DefaultQuery("source", "localhost")
+	dest := c.Query("destination")
+	// source := ServerMapByName[src]
+	// destination, ok := ServerMapByName[dest]
 
+	//if !ok {
+	//	return *req, errors.New("destination is server not defined")
+	//
+	//}
 	contentType := c.Request.Header.Get("Content-Type")
+	year, week := time.Now().ISOWeek()
+	reqF := RequestForm{
+		Source:       src,
+		Destination:  dest,
+		ContentType:  "application/json",
+		Year:         c.DefaultQuery("year", fmt.Sprintf("%d", year)),
+		Week:         c.DefaultQuery("week", fmt.Sprintf("%d", week)),
+		Month:        c.DefaultQuery("month", fmt.Sprintf("%d", int(time.Now().Month()))),
+		Period:       c.DefaultQuery("period", ""),
+		Facility:     c.DefaultQuery("facility", ""),
+		BatchID:      utils.GetUID(),
+		SubmissionID: c.DefaultQuery("submission_id", ""),
+		District:     c.DefaultQuery("district", ""),
+		CCServers:    strings.Split(c.DefaultQuery("cc_servers", ""), ","),
+		// Body:      string(reqBody), ObjectType: "ORGANISATION_UNIT", ReportType: "OU",
+	}
+
+	// sourceName :=
 	switch contentType {
 	case "application/json", "application/json-patch+json", "application/geo+json":
-		if err := c.BindJSON(reqForm); err != nil {
+		var body map[string]interface{}
+		if err := c.BindJSON(&body); err != nil {
 			log.WithError(err).Error("Error reading request object from POST body")
 		}
+		b, _ := json.Marshal(body)
+		// fmt.Println(string(b))
+		reqF.Body = string(b)
+		*req, _ = reqF.Save(db)
 		// log.WithField("New Server", s).Info("Going to create new server")
 	default:
 		//
@@ -219,53 +249,53 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 
 	// r.Source = int(GetServerIDByName(reqForm.Source))
 	// r.Destination = int(GetServerIDByName(reqForm.Destination))
-	source := ServerMapByName[reqForm.Source]
-	r.Source = int(source.ID())
-	destination := ServerMapByName[reqForm.Destination]
-	r.Source = int(destination.ID())
-	if r.Source == 0 {
-		return *req, errors.New(fmt.Sprintf("Source server %s not found!", reqForm.Source))
-	}
-	if r.Destination == 0 {
-		return *req, errors.New(fmt.Sprintf("Destination server %s not found!", reqForm.Destination))
-
-	}
-	ccServers := lo.Map(reqForm.CCServers, func(name string, _ int) int64 {
-		srv := ServerMapByName[name]
-		return int64(srv.ID())
-	})
-	r.CCServers = ccServers
-	r.UID = utils.GetUID()
-	r.ContentType = reqForm.ContentType
-	r.SubmissionID = reqForm.SubmissionID
-	r.BatchID = reqForm.BatchID
-	r.Period = reqForm.Period
-	r.Week = reqForm.Week
-	r.Month = reqForm.Month
-	r.Year = reqForm.Year
-	r.MSISDN = reqForm.MSISDN
-	r.Facility = reqForm.Facility
-	r.RawMsg = reqForm.RawMsg
-	r.URLSuffix = reqForm.URLSuffix
-	if reqForm.BodyIsQueryParams {
-		r.BodyIsQueryParams = true
-	}
-	r.ReportType = reqForm.ReportType
-	r.ObjectType = reqForm.ObjectType
-	r.Errors = reqForm.Extras
-	r.District = reqForm.District
-	r.Body = reqForm.Body
-
-	rows, err := db.NamedQuery(insertRequestSQL, r)
-	if err != nil {
-		log.WithError(err).Error("Error INSERTING Request")
-	}
-	for rows.Next() {
-		var reqId sql.NullInt64
-		_ = rows.Scan(&reqId)
-		r.ID = RequestID(reqId.Int64)
-	}
-	_ = rows.Close()
+	// log.WithField("ServerMapByNameXXX", ServerMapByName).Info("<<<<<<<>>>>>>")
+	//r.Source = int(source.ID())
+	//
+	//r.Destination = int(destination.ID())
+	//if r.Source == 0 {
+	//	return *req, errors.New(fmt.Sprintf("Source server %s not found! %v", reqForm.Source, reqForm))
+	//}
+	//if r.Destination == 0 {
+	//	return *req, errors.New(fmt.Sprintf("Destination server %v not found!", destination.s))
+	//
+	//}
+	//ccServers := lo.Map(reqForm.CCServers, func(name string, _ int) int64 {
+	//	srv := ServerMapByName[name]
+	//	return int64(srv.ID())
+	//})
+	//r.CCServers = ccServers
+	//r.UID = utils.GetUID()
+	//r.ContentType = contentType
+	//r.SubmissionID = reqForm.SubmissionID
+	//r.BatchID = reqForm.BatchID
+	//r.Period = reqForm.Period
+	//r.Week = reqForm.Week
+	//r.Month = reqForm.Month
+	//r.Year = reqForm.Year
+	//r.MSISDN = reqForm.MSISDN
+	//r.Facility = reqForm.Facility
+	//r.RawMsg = reqForm.RawMsg
+	//r.URLSuffix = reqForm.URLSuffix
+	//if reqForm.BodyIsQueryParams {
+	//	r.BodyIsQueryParams = true
+	//}
+	//r.ReportType = reqForm.ReportType
+	//r.ObjectType = reqForm.ObjectType
+	//r.Errors = reqForm.Extras
+	//r.District = reqForm.District
+	//r.Body = reqForm.Body
+	//
+	//rows, err := db.NamedQuery(insertRequestSQL, r)
+	//if err != nil {
+	//	log.WithError(err).Error("Error INSERTING Request")
+	//}
+	//for rows.Next() {
+	//	var reqId sql.NullInt64
+	//	_ = rows.Scan(&reqId)
+	//	r.ID = RequestID(reqId.Int64)
+	//}
+	//_ = rows.Close()
 	return *req, nil
 }
 
@@ -295,8 +325,8 @@ type RequestForm struct {
 	ID                RequestID   `db:"id" json:"-"`
 	UID               string      `db:"uid" json:"uid"`
 	BatchID           string      `db:"batchid" json:"batchId,omitempty"`
-	Source            string      `db:"source" json:"source" validate:"required"`
-	Destination       string      `db:"destination" json:"destination" validate:"required"`
+	Source            string      `uri:"source" db:"source" json:"source" validate:"required"`
+	Destination       string      `uri:"destination" db:"destination" json:"destination" validate:"required"`
 	DependsOn         dbutils.Int `db:"depends_on" json:"dependsOn,omitempty"`
 	CCServers         []string    `db:"cc_servers" json:"CCServers,omitempty"`
 	ContentType       string      `db:"ctype" json:"contentType,omitempty" validate:"required"`
@@ -338,10 +368,15 @@ func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
 		return *req, errors.New(fmt.Sprintf("Destination server %s not found!", rq.Destination))
 
 	}
-	ccServers := lo.Map(rq.CCServers, func(name string, _ int) int64 {
-		return GetServerIDByName(name)
-	})
-	r.CCServers = ccServers
+
+	if len(rq.CCServers) > 0 && rq.CCServers[0] == "" {
+		r.CCServers = []int64{}
+	} else {
+		ccServers := lo.Map(rq.CCServers, func(name string, _ int) int64 {
+			return GetServerIDByName(name)
+		})
+		r.CCServers = ccServers
+	}
 	r.UID = utils.GetUID()
 	r.ContentType = rq.ContentType
 	r.SubmissionID = rq.SubmissionID

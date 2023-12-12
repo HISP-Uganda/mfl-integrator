@@ -20,6 +20,7 @@ import (
 var MFLIntegratorConf Config
 var ForceSync *bool
 var SkipOUSync *bool
+var SkipRequestProcessing *bool
 var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
 
 func init() {
@@ -45,6 +46,7 @@ func init() {
 
 	ForceSync = flag.Bool("force-sync", false, "Whether to forcefully sync organisation unit hierarchy")
 	SkipOUSync = flag.Bool("skip-ousync", false, "Whether to skip ou and facility sync. But process requests")
+	SkipRequestProcessing = flag.Bool("skip-request-processing", false, "Whether to skip requests processing")
 
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()

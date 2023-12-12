@@ -5,7 +5,6 @@ import (
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/gin-gonic/gin"
-	log "github.com/sirupsen/logrus"
 	"strings"
 )
 
@@ -33,7 +32,7 @@ func BasicAuth() gin.HandlerFunc {
 }
 
 func AuthenticateUser(username, password string) bool {
-	log.Printf("Username:%s, password:%s", username, password)
+	// log.Printf("Username:%s, password:%s", username, password)
 	userObj := models.User{}
 	err := db.GetDB().QueryRowx(
 		`SELECT
