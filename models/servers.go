@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,8 +28,19 @@ import (
 )
 
 func init() {
+	var migrationsDir string
+	currentOS := runtime.GOOS
+	switch currentOS {
+	case "windows":
+		migrationsDir = "file:///C:\\ProgramData\\MFLIntegrator"
+	case "darwin", "linux":
+		migrationsDir = "file:///usr/share/mflintegrator/db/migrations\""
+	default:
+		migrationsDir = "file://db/migrations"
+	}
 	m, err := migrate.New(
-		"file://db/migrations",
+		// "file:///usr/share/mflintegrator/db/migrations", // file://db/migrations
+		migrationsDir,
 		config.MFLIntegratorConf.Database.URI)
 	if err != nil {
 		log.Fatal(err)
@@ -61,7 +73,7 @@ func init() {
 		// log.WithField("SERVER", srv.s).Info("=====>")
 
 	}
-	log.WithField("ServerMapByName", ServerMapByName).Info("========>")
+	// log.WithField("ServerMapByName", ServerMapByName).Info("========>")
 	_ = rows.Close()
 }
 

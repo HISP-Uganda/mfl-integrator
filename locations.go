@@ -233,10 +233,10 @@ func MatchLocationsWithMFL() {
 		apiURL := config.MFLIntegratorConf.API.MFLBaseURL
 		params := url.Values{}
 		_type := l.Name
-		if _type == "District" {
+		if _type == "District" || _type == "District/City" {
 			_type = "Local Government"
 		}
-		if _type == "Sub County/Town Council/Div" {
+		if _type == "Sub County/Town Council/Division" || _type == "Sub County/Town Council/Div" {
 			_type = "Sub county/Town Council/Division"
 		}
 		params.Add("resource", "Location")
@@ -301,6 +301,7 @@ func MatchLocationsWithMFL() {
 						if ou.ParentID == models.GetOUByMFLParentId(parent) {
 							// This could be our match
 							ou.UpdateMFLParent(parent)
+							ou.UpdateMFLID(id)
 							log.WithFields(log.Fields{"Id": id, "Name": name, "To": ou.ID, "Parent": parent}).Info("Matched to this one")
 						}
 					}
@@ -558,13 +559,13 @@ func FetchFacilities(mflId, batchId string) {
 }
 
 const districtSQL = `SELECT mflid FROM organisationunit WHERE hierarchylevel = 
-    (SELECT level from orgunitlevel where name = 'District') ORDER BY name`
+    (SELECT level from orgunitlevel where name = $1) ORDER BY name`
 
 // FetchFacilitiesByDistrict fetches Facilities from MFL by district - if we don't get mflids then fetch everything
 func FetchFacilitiesByDistrict() {
 	log.Info("Going to Fetch Facilities By District")
 	batchId := utils.GetUID()
-	rows, err := db.GetDB().Queryx(districtSQL)
+	rows, err := db.GetDB().Queryx(districtSQL, config.MFLIntegratorConf.API.MFLDHIS2DistrictLevelName)
 	if err != nil {
 		log.WithError(err).Info("Failed to get district mflids from database")
 		FetchFacilities("", batchId)

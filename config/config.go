@@ -20,14 +20,16 @@ import (
 var MFLIntegratorConf Config
 var ForceSync *bool
 var SkipOUSync *bool
-var SkipRequestProcessing *bool
+var SkipRequestProcessing *bool // used to ignore the attempt to send request. Don't produce or consume requests
 var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
+
+// var FakeSyncToBaseDHIS2 *bool
 
 func init() {
 	// ./mfl-integrator --config-file /etc/mflintegrator/mfld.yml
 	var configFilePath, configDir, conf_dDir string
-	curentOS := runtime.GOOS
-	switch curentOS {
+	currentOS := runtime.GOOS
+	switch currentOS {
 	case "windows":
 		configDir = "C:\\ProgramData\\MFLIntegrator"
 		configFilePath = "C:\\ProgramData\\MFLIntegrator\\mfld.yml"
@@ -47,6 +49,7 @@ func init() {
 	ForceSync = flag.Bool("force-sync", false, "Whether to forcefully sync organisation unit hierarchy")
 	SkipOUSync = flag.Bool("skip-ousync", false, "Whether to skip ou and facility sync. But process requests")
 	SkipRequestProcessing = flag.Bool("skip-request-processing", false, "Whether to skip requests processing")
+	// FakeSyncToBaseDHIS2 = flag.Bool("fake-sync-to-base-dhis2", false, "Whether to fake sync to base DHIS2")
 
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()
@@ -57,7 +60,7 @@ func init() {
 
 	if len(*configFile) > 0 {
 		viper.SetConfigFile(*configFile)
-		log.Printf("Config File %v", *configFile)
+		// log.Printf("Config File %v", *configFile)
 	}
 
 	if err := viper.ReadInConfig(); err != nil {
@@ -146,7 +149,10 @@ type Config struct {
 		StartOfSubmissionPeriod string `mapstructure:"start_submission_period" env:"MFLINTEGRATOR_START_SUBMISSION_PERIOD" env-default:"18"`
 		EndOfSubmissionPeriod   string `mapstructure:"end_submission_period" env:"MFLINTEGRATOR_END_SUBMISSION_PERIOD" env-default:"24"`
 		MaxConcurrent           int    `mapstructure:"max_concurrent" env:"MFLINTEGRATOR_MAX_CONCURRENT" env-default:"5"`
+		SkipRequestProcessing   bool   `mapstructure:"skip_request_processing" env:"MFLINTEGRATOR_SKIP_REQUEST_PROCESSING" env-default:"false"`
+		ForceSync               bool   `mapstructure:"force_sync" env:"MFLINTEGRATOR_FORCE_SYNC" env-default:"false"` // Assume OU hierarchy already there
 		SyncOn                  bool   `mapstructure:"sync_on" env:"MFLINTEGRATOR_SYNC_ON" env-default:"true"`
+		FakeSyncToBaseDHIS2     bool   `mapstructure:"fake_sync_to_base_dhis2" env:"MFLINTEGRATOR_FAKE_SYNC_TO_BASE_DHIS2" env-default:"false"`
 		RequestProcessInterval  int    `mapstructure:"request_process_interval" env:"MFLINTEGRATOR_REQUEST_PROCESS_INTERVAL" env-default:"4"`
 		LogDirectory            string `mapstructure:"logdir" env:"MFLINTEGRATOR_LOGDIR" env-default:"/var/log/mflintegrator"`
 		UseSSL                  string `mapstructure:"use_ssl" env:"MFLINTEGRATOR_USE_SSL" env-default:"true"`
@@ -165,6 +171,7 @@ type Config struct {
 		MFLDHIS2PAT                 string `mapstructure:"mfl_dhis2_pat"  env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The MFL base DHIS2  Personal Access Token"`
 		MFLDHIS2TreeIDs             string `mapstructure:"mfl_dhis2_tree_ids"  env:"MFLINTEGRATOR_DHIS2_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level ids"`
 		MFLDHIS2FacilityLevel       int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities" env-default:"5"`
+		MFLDHIS2DistrictLevelName   string `mapstructure:"mfl_dhis2_district_oulevel_name"  env:"MFLINTEGRATOR_DHIS2_DISTRICT_OULEVEL_NAME" env-description:"The MFL base DHIS2 OU Level name for districts" env-default:"District/City"`
 		MFLDHIS2OUMFLIDAttributeID  string `mapstructure:"mfl_dhis2_ou_mflid_attribute_id" env:"MFLINTEGRATOR_DHIS2_OU_MFLID_ATTRIBUTE_ID" env-description:"The DHIS2 OU MFLID Attribute ID"`
 		MFLCCDHIS2Servers           string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
 		MFLCCDHIS2HierarchyServers  string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`

@@ -519,7 +519,7 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER after_request_insert_trigger
     AFTER INSERT ON requests
     FOR EACH ROW
-EXECUTE FUNCTION after_request_insert_trigger_function();
+EXECUTE PROCEDURE after_request_insert_trigger_function();
 
 CREATE OR REPLACE FUNCTION status_of_dependence(reqId BIGINT) RETURNS TEXT AS
 $delim$

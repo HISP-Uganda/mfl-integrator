@@ -8,18 +8,23 @@ database:
 server:
   host: "localhost"
   http_port: 9090
+  proxy_port: 9191
   max_retries: 3
   max_concurrent: 5
+  start_submission_period: 0
+  end_submission_period: 23
+  skip_request_processing: false
   sync_on: true
+  fake_sync_to_base_dhis2: false
   request_process_interval: 4
-  logdir: "/var/log/dispatcher2"
+  logdir: "/var/log/mflintegrator"
 
 api:
   mfl_base_url: ""
   mfl_user: ""
   mfl_password: ""
   mfl_dhis2_base_url: ""
-  mfl_dhis2_username: ""
+  mfl_dhis2_user: ""
   mfl_dhis2_password: ""
   mfl_dhis2_pat: ""
   mfl_cc_dhis2_hierarchy_servers: "test240_OU,test237_OU"
@@ -30,5 +35,7 @@ api:
   mfl_metadata_batch_size: 50
   mfl_dhis2_facility_level: 5
   mfl_sync_cron_expression: "0 0-23/6 * * *"
+  mfl_retry_cron_expression: "0 * * * *"
+  mfl_dhis2_ou_mflid_attribute_id: "Hb4BF0KTbZ1"
   authtoken: ABC
   smsurl: ""

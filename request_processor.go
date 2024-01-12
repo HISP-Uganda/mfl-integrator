@@ -356,11 +356,16 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 		tokenAuth := "ApiToken " + destination.AuthToken()
 		req.Header.Set("Authorization", tokenAuth)
 		log.WithField("AuthToken", tokenAuth).Info("The authentication token:")
-	default: // Basic Auth
-		// Add basic authentication
+	case "Basic", "Basic Auth":
 		auth := destination.Username() + ":" + destination.Password()
 		basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 		req.Header.Set("Authorization", basicAuth)
+
+	default: // Basic Auth
+		// Add basic authentication
+		// auth := destination.Username() + ":" + destination.Password()
+		// basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+		// req.Header.Set("Authorization", basicAuth)
 
 	}
 
@@ -443,9 +448,10 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 			log.WithError(err).Error("Error reading requests")
 		}
 		_ = rows.Close()
-
-		log.WithField("requestsAdded", requestsCount).Info("Fetched Requests")
-		log.Info(fmt.Sprintf("Going to sleep for: %v", config.MFLIntegratorConf.Server.RequestProcessInterval))
+		if requestsCount > 0 {
+			log.WithField("requestsAdded", requestsCount).Info("Fetched Requests")
+			log.Info(fmt.Sprintf("Going to sleep for: %v", config.MFLIntegratorConf.Server.RequestProcessInterval))
+		}
 		// Not good enough but let's bare with the sleep this initial version
 		time.Sleep(
 			time.Duration(config.MFLIntegratorConf.Server.RequestProcessInterval) * time.Second)
@@ -480,7 +486,13 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 		// dest = utils.GetServer(reqObj.Destination)
 		// log.WithFields(log.Fields{"servers": models.ServerMap}).Info("Servers")
 		if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
-			_ = ProcessRequest(tx, reqObj, reqDestination, false, false)
+			if config.MFLIntegratorConf.Server.FakeSyncToBaseDHIS2 {
+				reqObj.withStatus(models.RequestStatusCompleted).updateRequestStatus(tx)
+				reqObj.StatusCode = "FAKED"
+				reqObj.updateRequest(tx)
+			} else {
+				_ = ProcessRequest(tx, reqObj, reqDestination, false, false)
+			}
 
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
@@ -717,7 +729,14 @@ func RetryIncompleteRequests() {
 		if reqObj.Status == "failed" { // destination server request had failed
 			if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
 				if reqObj.Retries <= config.MFLIntegratorConf.Server.MaxRetries {
-					_ = ProcessRequest(tx, reqObj, reqDestination, false, true)
+					if config.MFLIntegratorConf.Server.FakeSyncToBaseDHIS2 {
+						reqObj.StatusCode = "FAKED"
+						reqObj.withStatus(models.RequestStatusCompleted).updateRequestStatus(tx)
+						reqObj.updateRequest(tx)
+
+					} else {
+						_ = ProcessRequest(tx, reqObj, reqDestination, false, true)
+					}
 				} else {
 					reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
 				}
