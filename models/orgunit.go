@@ -396,23 +396,23 @@ func (o *OrganisationUnit) NewOrgUnit() {
 	_ = rows.Close()
 }
 
-func (o *OrganisationUnit) CompareDefinition(newDefinition dbutils.MapAnything) (bool, dbutils.MapAnything, error) {
+func (o *OrganisationUnit) CompareDefinition(latestDefinition dbutils.MapAnything) (bool, dbutils.MapAnything, error) {
 	dbConn := db.GetDB()
 	var matches bool
 	var diff dbutils.MapAnything
-	oldFacilityJSON, err := json.Marshal(o)
+	currentFacilityJSON, err := json.Marshal(o)
 	if err != nil {
 		log.WithError(err).Info("Failed to convert facility object to JSON")
 		return false, nil, err
 	}
-	newFacilityJSON, err := json.Marshal(newDefinition)
+	latestRevisionFacilityJSON, err := json.Marshal(latestDefinition)
 	if err != nil {
 		log.WithError(err).Info("Failed to convert new facility object to JSON")
 		return false, diff, err
 	}
 
 	err = dbConn.Get(&diff, `SELECT jsonb_diff_val($1::JSONB, $2::JSONB)`,
-		oldFacilityJSON, newFacilityJSON)
+		currentFacilityJSON, latestRevisionFacilityJSON)
 	if err != nil {
 		log.WithError(err).Info("Failed the JSON objects for new and old facility definition")
 		return false, diff, err
@@ -563,6 +563,20 @@ type OrgUnitRevision struct {
 	Definition          dbutils.MapAnything `db:"definition" json:"definition"`
 	Created             string              `db:"created" json:"created,omitempty"`
 	Updated             string              `db:"updated" json:"updated,omitempty"`
+}
+
+func (o *OrganisationUnit) GetLatestRevision() []byte {
+	dbConn := db.GetDB()
+	var definition dbutils.MapAnything
+	err := dbConn.Get(&definition, `SELECT 
+		definition FROM orgunitrevision WHERE orgunitrevision.organisationunit_id = $1 
+		ORDER BY revision DESC LIMIT 1`, o.DBID())
+	if err != nil {
+		log.WithField("Facility UID", o.UID).WithError(err).Info("Failed to Get Facility's latest revision")
+		return []byte(`{}`)
+	}
+	ret, _ := json.Marshal(definition)
+	return ret
 }
 
 // GetCurrentVersion returns the latest version number for the facility.

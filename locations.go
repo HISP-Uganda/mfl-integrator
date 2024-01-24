@@ -495,17 +495,19 @@ func FetchFacilities(mflId, batchId string) {
 
 			} else {
 				// facility exists
-				var fj dbutils.MapAnything
+				var fj, lastestRevision dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
-				newMatchedOld, diffMap, err := facility.CompareDefinition(fj)
+				_ = json.Unmarshal(facility.GetLatestRevision(), &lastestRevision)
+				newMatchedOld, diffMap, err := facility.CompareDefinition(lastestRevision)
 				fj["parent"] = facility.Parent()
 				if err != nil {
 					log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
 				}
 				if newMatchedOld {
 					// new definition matched the old
-					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID(), "Parent": fj["parent"]}).Info(
-						"========= Facility has no changes =======")
+					log.WithFields(log.Fields{
+						"UID": facility.UID, "ValidUID": facility.ValidateUID(),
+						"Diff": diffMap}).Info("========= Facility has no changes =======")
 					numberIgnored += 1
 					continue
 				} else {
@@ -548,6 +550,7 @@ func FetchFacilities(mflId, batchId string) {
 		Stopped:       endTime,
 		NumberCreated: dbutils.Int(numberCreated),
 		NumberUpdated: dbutils.Int(numberUpdated),
+		NumberIgnored: dbutils.Int(numberIgnored),
 		// ServersSyncLog:
 	}
 	syncLog.LogSync()
@@ -574,6 +577,7 @@ func FetchFacilitiesByDistrict() {
 	for rows.Next() {
 		var district string
 		err := rows.Scan(&district)
+		log.WithField("District", district).Info("Syncing Facilities")
 		if err != nil {
 			log.WithError(err).Error("Error reading district mflid from database:")
 			continue
@@ -581,6 +585,7 @@ func FetchFacilitiesByDistrict() {
 		FetchFacilities(district, batchId)
 	}
 	_ = rows.Close()
+	log.Info("Finished Fetching Facilities By District")
 }
 
 // GetExtensions gets extensions within an entry in a FHIR bundle
