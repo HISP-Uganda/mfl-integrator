@@ -34,7 +34,7 @@ func init() {
 	case "windows":
 		migrationsDir = "file:///C:\\ProgramData\\MFLIntegrator"
 	case "darwin", "linux":
-		migrationsDir = "file:///usr/share/mflintegrator/db/migrations\""
+		migrationsDir = "file:///usr/share/mflintegrator/db/migrations"
 	default:
 		migrationsDir = "file://db/migrations"
 	}

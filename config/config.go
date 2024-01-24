@@ -22,6 +22,9 @@ var ForceSync *bool
 var SkipOUSync *bool
 var SkipRequestProcessing *bool // used to ignore the attempt to send request. Don't produce or consume requests
 var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
+var ShowVersion *bool
+
+const VERSION = "1.0.2"
 
 // var FakeSyncToBaseDHIS2 *bool
 
@@ -49,10 +52,15 @@ func init() {
 	ForceSync = flag.Bool("force-sync", false, "Whether to forcefully sync organisation unit hierarchy")
 	SkipOUSync = flag.Bool("skip-ousync", false, "Whether to skip ou and facility sync. But process requests")
 	SkipRequestProcessing = flag.Bool("skip-request-processing", false, "Whether to skip requests processing")
+	ShowVersion = flag.Bool("version", false, "Display version of MFL Integrator")
 	// FakeSyncToBaseDHIS2 = flag.Bool("fake-sync-to-base-dhis2", false, "Whether to fake sync to base DHIS2")
 
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()
+	if *ShowVersion {
+		fmt.Println("MFL Integrator: ", VERSION)
+		os.Exit(1)
+	}
 
 	viper.SetConfigName("mfld")
 	viper.SetConfigType("yaml")
