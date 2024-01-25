@@ -495,11 +495,12 @@ func FetchFacilities(mflId, batchId string) {
 
 			} else {
 				// facility exists
+
 				var fj, lastestRevision dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
 				_ = json.Unmarshal(facility.GetLatestRevision(), &lastestRevision)
-				newMatchedOld, diffMap, err := facility.CompareDefinition(lastestRevision)
 				fj["parent"] = facility.Parent()
+				newMatchedOld, diffMap, err := models.CompareDefinition(fj, lastestRevision)
 				if err != nil {
 					log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
 				}
@@ -507,13 +508,23 @@ func FetchFacilities(mflId, batchId string) {
 					// new definition matched the old
 					log.WithFields(log.Fields{
 						"UID": facility.UID, "ValidUID": facility.ValidateUID(),
-						"Diff": diffMap}).Info("========= Facility has no changes =======")
+						"Parent": facility.ParentID,
+						"Diff":   diffMap}).Info("========= Facility has no changes =======")
 					numberIgnored += 1
 					continue
 				} else {
-					metadataPayload := models.GenerateMetadataPayload(fj, diffMap)
-					log.WithFields(log.Fields{"UID": facility.UID, "ValidUID": facility.ValidateUID(),
-						"Diff": diffMap, "MetadataPalyload": metadataPayload}).Info(
+					// metadataPayload := models.GenerateMetadataPayload(fj)
+					old, _ := json.Marshal(lastestRevision)
+					new, _ := json.Marshal(facility)
+					metadataPayloadFromDiff := models.GenerateMetadataPayload(diffMap)
+					log.WithFields(log.Fields{
+						"UID": facility.UID, "ValidUID": facility.ValidateUID(),
+						"New":  string(new),
+						"OLD":  string(old),
+						"Diff": diffMap, "parent": facility.ParentID,
+						"MetadataFromDiff": metadataPayloadFromDiff,
+						// "MetadataPalyload": metadataPayload,
+					}).Info(
 						"::::::::: Facility had some changes :::::::::")
 
 					// make a revision
@@ -524,7 +535,7 @@ func FetchFacilities(mflId, batchId string) {
 
 					// Generate Metadata Update object - for facility with valid UID
 					if facility.ValidateUID() {
-						reqF := GenerateUpdateMetadataRequest(metadataPayload)
+						reqF := GenerateUpdateMetadataRequest(metadataPayloadFromDiff, facility.UID)
 						reqF.BatchID = batchId
 						_, err := reqF.Save(dbConn)
 						if err != nil {
@@ -533,6 +544,33 @@ func FetchFacilities(mflId, batchId string) {
 							continue
 						}
 					}
+
+					// We want to update OU Groups as well
+					facilityMetadata := models.MetadataOu{}
+
+					err := json.Unmarshal(facilityJSON, &facilityMetadata)
+					if err != nil {
+						log.WithError(err).Error("Updating OU: Failed to unmarshal facility into Metadata object")
+					}
+					// Now create requests to add orgunit to the right orgunit groups
+					ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+					requestForms := MakeOrgunitGroupsAdditionRequests(
+						ouGroupRequests, dbutils.Int(0), facilityMetadata.UID)
+					for _, rForm := range requestForms {
+						if rForm.Source == "" {
+							continue
+						}
+						rForm.BatchID = batchId // set the BatchID here
+						_, err := rForm.Save(dbConn)
+						if err != nil {
+							log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
+								"Updating OU: Failed to queue request to add OU to OUGroup")
+							continue
+						}
+						log.WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Info(
+							"Updating OU: Queued Request to add facility to group!")
+					}
+
 					numberUpdated += 1
 				}
 
@@ -758,20 +796,23 @@ func MakeOrgunitGroupsAdditionRequests(
 		}
 		year, week := time.Now().ISOWeek()
 		var reqF = models.RequestForm{
-			DependsOn: dependency,
-			Source:    "localhost", Destination: "base_OU_GroupAdd", ContentType: "application/json-patch+json",
+			// DependsOn: dependency,
+			Source: "localhost", Destination: "base_OU_GroupAdd", ContentType: "application/json-patch+json",
 			Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
 			Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: facilityUID, BatchID: "", SubmissionID: "",
 			CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2OuGroupAddServers, ","),
 			URLSuffix: fmt.Sprintf("/%s", k),
 			Body:      string(v), ObjectType: "ORGUNIT_GROUP_ADD", ReportType: "OUGROUP_ADD",
 		}
+		if dependency > 0 {
+			reqF.DependsOn = dependency
+		}
 		requests = append(requests, reqF)
 	}
 	return requests
 }
 
-func GenerateUpdateMetadataRequest(update []models.MetadataObject) models.RequestForm {
+func GenerateUpdateMetadataRequest(update []models.MetadataObject, facilityUID string) models.RequestForm {
 	req := models.RequestForm{}
 	body, err := json.Marshal(update)
 	if err != nil {
@@ -780,10 +821,11 @@ func GenerateUpdateMetadataRequest(update []models.MetadataObject) models.Reques
 	}
 	year, week := time.Now().ISOWeek()
 	reqF := models.RequestForm{
-		Source: "localhost", Destination: "base_OU", ContentType: "application/json-patch+json",
+		Source: "localhost", Destination: "base_OU_Update", ContentType: "application/json-patch+json",
 		Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
-		Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: "", BatchID: "", SubmissionID: "",
-		CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2CreateServers, ","),
+		Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: facilityUID, BatchID: "", SubmissionID: "",
+		CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2UpdateServers, ","),
+		URLSuffix: fmt.Sprintf("/%s", facilityUID),
 		Body:      string(body),
 	}
 

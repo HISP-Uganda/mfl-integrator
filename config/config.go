@@ -163,6 +163,7 @@ type Config struct {
 		FakeSyncToBaseDHIS2     bool   `mapstructure:"fake_sync_to_base_dhis2" env:"MFLINTEGRATOR_FAKE_SYNC_TO_BASE_DHIS2" env-default:"false"`
 		RequestProcessInterval  int    `mapstructure:"request_process_interval" env:"MFLINTEGRATOR_REQUEST_PROCESS_INTERVAL" env-default:"4"`
 		LogDirectory            string `mapstructure:"logdir" env:"MFLINTEGRATOR_LOGDIR" env-default:"/var/log/mflintegrator"`
+		MigrationsDirectory     string `mapstructure:"migrations_dir" env:"MFLINTEGRATOR_MIGRATTIONS_DIR" env-default:"file:///usr/share/mflintegrator/db/migrations"`
 		UseSSL                  string `mapstructure:"use_ssl" env:"MFLINTEGRATOR_USE_SSL" env-default:"true"`
 		SSLClientCertKeyFile    string `mapstructure:"ssl_client_certkey_file" env:"SSL_CLIENT_CERTKEY_FILE" env-default:""`
 		SSLServerCertKeyFile    string `mapstructure:"ssl_server_certkey_file" env:"SSL_SERVER_CERTKEY_FILE" env-default:""`
@@ -184,6 +185,7 @@ type Config struct {
 		MFLCCDHIS2Servers           string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
 		MFLCCDHIS2HierarchyServers  string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
 		MFLCCDHIS2CreateServers     string `mapstructure:"mfl_cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`
+		MFLCCDHIS2UpdateServers     string `mapstructure:"mfl_cc_dhis2_update_servers"  env:"MFLINTEGRATOR_CC_DHIS2_UPDATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU updates"`
 		MFLCCDHIS2OuGroupAddServers string `mapstructure:"mfl_cc_dhis2_ougroup_add_servers"  env:"MFLINTEGRATOR_CC_DHIS2_OUGROUP_ADD_SERVERS" env-description:"The MFL CC DHIS2 instances APIs used to add ous to groups"`
 		MFLMetadataBatchSize        int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata items to chunk in a metadata request" env-default:"50"`
 		MFLSyncCronExpression       string `mapstructure:"mfl_sync_cron_expression"  env:"MFLINTEGRATOR_SYNC_CRON_EXPRESSION" env-description:"The MFL Health Facility Syncronisation Cron Expression" env-default:"0 0-23/6 * * *"`

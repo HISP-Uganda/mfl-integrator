@@ -18,18 +18,20 @@ server:
   fake_sync_to_base_dhis2: false
   request_process_interval: 4
   logdir: "/var/log/mflintegrator"
+  migrations_dir: "file:///usr/share/mflintegrator/db/migrations"
 
 api:
   mfl_base_url: ""
   mfl_user: ""
   mfl_password: ""
   mfl_dhis2_base_url: ""
-  mfl_dhis2_user: ""
-  mfl_dhis2_password: ""
+  mfl_dhis2_user: "admin"
+  mfl_dhis2_password: "district"
   mfl_dhis2_pat: ""
   mfl_cc_dhis2_hierarchy_servers: "test240_OU,test237_OU"
   mfl_cc_dhis2_servers: "test237_OU,test240_OU"
   mfl_cc_dhis2_create_servers: "test240_OU,test237_OU"
+  mfl_cc_dhis2_update_servers: "test240_OU_Update,test237_OU_Update"
   mfl_cc_dhis2_ougroup_add_servers: "test240_OU_GroupAdd,test237_OU_GroupAdd"
   mfl_dhis2_tree_ids: "akV6429SUqu"
   mfl_metadata_batch_size: 50
