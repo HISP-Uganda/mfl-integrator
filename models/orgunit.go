@@ -396,11 +396,11 @@ func (o *OrganisationUnit) NewOrgUnit() {
 	_ = rows.Close()
 }
 
-func (o *OrganisationUnit) CompareDefinition(latestDefinition dbutils.MapAnything) (bool, dbutils.MapAnything, error) {
+func CompareDefinition(newDefinition, latestDefinition dbutils.MapAnything) (bool, dbutils.MapAnything, error) {
 	dbConn := db.GetDB()
 	var matches bool
 	var diff dbutils.MapAnything
-	currentFacilityJSON, err := json.Marshal(o)
+	currentFacilityJSON, err := json.Marshal(newDefinition)
 	if err != nil {
 		log.WithError(err).Info("Failed to convert facility object to JSON")
 		return false, nil, err
@@ -443,14 +443,14 @@ func (o *OrganisationUnit) UpdateMFLUID(mflUID string) {
 func GetOrgUnitByMFLID(mflid string) OrganisationUnit {
 	dbConn := db.GetDB()
 	var ou OrganisationUnit
-	rows, err := dbConn.Queryx(`SELECT id,hierarchylevel,path FROM organisationunit WHERE mflid = $1`, mflid)
+	rows, err := dbConn.Queryx(`SELECT id,hierarchylevel,path, uid FROM organisationunit WHERE mflid = $1`, mflid)
 	if err != nil {
 		log.WithError(err).WithField("MFLID", mflid).Info("Failed to get orgunit DBUID")
 	}
 	for rows.Next() {
-		var id, path string
+		var id, path, uid string
 		var lvl int
-		err := rows.Scan(&id, &lvl, &path)
+		err := rows.Scan(&id, &lvl, &path, &uid)
 		if err != nil {
 			// log.Fatalln("==>", err)
 			log.WithError(err).Error("Error reading request from queue:")
@@ -458,6 +458,7 @@ func GetOrgUnitByMFLID(mflid string) OrganisationUnit {
 		ou.ID = id
 		ou.Level = lvl
 		ou.Path = path
+		ou.UID = uid
 	}
 	_ = rows.Close()
 	return ou
@@ -638,14 +639,14 @@ type MetadataObject struct {
 	Value     any    `json:"value"`
 }
 
-func GenerateMetadataPayload(newFacility, diffMap dbutils.MapAnything) []MetadataObject {
-	metaDataSlice := make([]MetadataObject, len(diffMap))
-
+func GenerateMetadataPayload(newFacility dbutils.MapAnything) []MetadataObject {
+	// metaDataSlice := make([]MetadataObject, len(diffMap))
+	var metaDataSlice []MetadataObject
 	for k := range newFacility {
 		switch k {
-		case "extras", "url", "uid", "mflId", "mflParent", "mflUID":
+		case "extras", "url", "uid", "mflId", "mflParent", "mflUID", "id", "organisationUnitGroups":
 		default:
-			m := MetadataObject{Operation: "add", Path: k, Value: newFacility[k]}
+			m := MetadataObject{Operation: "add", Path: fmt.Sprintf("/%s", k), Value: newFacility[k]}
 			metaDataSlice = append(metaDataSlice, m)
 		}
 	}

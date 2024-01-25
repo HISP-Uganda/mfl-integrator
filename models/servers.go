@@ -34,7 +34,7 @@ func init() {
 	case "windows":
 		migrationsDir = "file:///C:\\ProgramData\\MFLIntegrator"
 	case "darwin", "linux":
-		migrationsDir = "file:///usr/share/mflintegrator/db/migrations"
+		migrationsDir = config.MFLIntegratorConf.Server.MigrationsDirectory
 	default:
 		migrationsDir = "file://db/migrations"
 	}
@@ -558,7 +558,14 @@ func CreateBaseDHIS2Server() {
 	ouGroupAddServer.s.EndPointType = "OU_ORGUNIT_GROUP_ADD"
 	ouGroupAddServer.s.URLParams = make(dbutils.MapAnything)
 
-	serverList := []Server{*metadataServer, ouGroupAddServer}
+	ouUpdateServer := *metadataServer
+	ouUpdateServer.s.Name = "base_OU_Update"
+	ouUpdateServer.s.HTTPMethod = "PATCH"
+	ouUpdateServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/organisationUnits"
+	ouUpdateServer.s.EndPointType = "OU_ORGUNIT_UPDATE"
+	ouUpdateServer.s.URLParams = make(dbutils.MapAnything)
+
+	serverList := []Server{*metadataServer, ouGroupAddServer, ouUpdateServer}
 	summary, err := CreateServers(db.GetDB(), serverList)
 	if err != nil {
 		log.WithError(err).Error("Failed to create base DHIS server in dispatcher")
