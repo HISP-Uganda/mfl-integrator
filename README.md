@@ -11,10 +11,10 @@ you need to run it on your server.
 For more detailed documentation, please visit [https://wiki.hispuganda.org/en/mfl/index](https://wiki.hispuganda.org/en/internship/index) 
 
 # Stable Versions
-- [Linux: mfl-integrator_1.0.2_linux_amd64.tar.gz](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mfl-integrator_1.0.2_linux_amd64.tar.gz)
-- [Debian Package: mflintegrator_1.0.2_amd64.deb](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mflintegrator_1.0.2_amd64.deb)
-- [Mac-OS Darwin: mfl-integrator_1.0.2_darwin_amd64.tar.gz](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mfl-integrator_1.0.2_darwin_amd64.tar.gz)
-- [Windows: mfl-integrator_1.0.2_windows_amd64.tar.gz](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mfl-integrator_1.0.2_windows_amd64.tar.gz)
+- **Linux:** [mfl-integrator_1.0.2_linux_amd64.tar.gz](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mfl-integrator_1.0.2_linux_amd64.tar.gz)
+- **Debian Package:** [mflintegrator_1.0.2_amd64.deb](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mflintegrator_1.0.2_amd64.deb)
+- **Mac-OS Darwin:** [mfl-integrator_1.0.2_darwin_amd64.tar.gz](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mfl-integrator_1.0.2_darwin_amd64.tar.gz)
+- **Windows:** [mfl-integrator_1.0.2_windows_amd64.tar.gz](https://github.com/HISP-Uganda/mfl-integrator/releases/download/v1.0.2/mfl-integrator_1.0.2_windows_amd64.tar.gz)
 
 # Configuration
 mfl-integrator uses a tiered configuration system, each option takes precendence over the ones above it:
