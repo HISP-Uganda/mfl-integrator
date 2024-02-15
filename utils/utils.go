@@ -74,17 +74,23 @@ type DHIS2UID interface {
 
 // GetUID return a Unique ID for our resources
 func GetUID() string {
-	rand.Seed(time.Now().UnixNano())
-	numberOfCodePoinst := len(allowedCharacters)
+	source := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(source) // Creates a new instance of rand.Rand, safe for concurrent use
 
-	s := ""
-	s += fmt.Sprintf("%s", strings.ToUpper(string(alphabet[rand.Intn(25)])))
+	numberOfCodePoints := len(allowedCharacters)
 
+	var s strings.Builder
+	s.Grow(codeSize) // Pre-allocate memory to improve performance
+
+	// Ensure the first character is an uppercase letter from the alphabet
+	s.WriteByte(allowedCharacters[r.Intn(26)] - 32) // Convert to uppercase
+
+	// Generate the rest of the UID
 	for i := 1; i < codeSize; i++ {
-		s += fmt.Sprintf("%s", string(allowedCharacters[rand.Intn(numberOfCodePoinst-1)]))
+		s.WriteByte(allowedCharacters[r.Intn(numberOfCodePoints)])
 	}
 
-	return s
+	return s.String()
 }
 
 func GetWithToken(
