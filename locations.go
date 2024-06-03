@@ -374,7 +374,7 @@ func FetchFacilities(mflId, batchId string) {
 	if resp != nil {
 		v, _, _, err := jsonparser.Get(resp, "entry")
 		if err != nil {
-			log.WithError(err).Error("No entries found from MFL")
+			log.WithError(err).Info("No entries found from MFL")
 			return
 		}
 		var entries []LocationEntry
@@ -392,6 +392,10 @@ func FetchFacilities(mflId, batchId string) {
 			if err != nil {
 				log.WithError(err).Info("Failed to marshal facility to JSON")
 				continue
+			}
+			if facility.Geometry.Type == "" {
+				facilityJSON = utils.PatchJSONObject(facilityJSON, []byte(`[
+				{"op": "remove", "path": "/geometry"}]`))
 			}
 			log.WithField("FacilityJson", string(facilityJSON)).Info("Facility Object")
 			if len(facility.Path) < 15 {
@@ -705,7 +709,7 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	coordinateBytes, err := json.Marshal(coordinates)
 	if err != nil {
 		log.WithError(err).Info("Failed to marshal coordinates", coordinates)
-		_, _ = json.Marshal([]json.Number{})
+		coordinateBytes, _ = json.Marshal([]json.Number{})
 	}
 
 	phone, email := getPhoneAndEmail(location.Resource.Telecom)

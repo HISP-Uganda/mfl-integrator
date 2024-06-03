@@ -24,7 +24,7 @@ var SkipRequestProcessing *bool // used to ignore the attempt to send request. D
 var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
 var ShowVersion *bool
 
-const VERSION = "1.0.2"
+const VERSION = "1.0.3"
 
 // var FakeSyncToBaseDHIS2 *bool
 

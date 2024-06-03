@@ -26,7 +26,7 @@ type MetadataOu struct {
 	Code                   string        `db:"code" json:"code,omitempty"`
 	OpeningDate            string        `db:"openingdate" json:"openingDate"`
 	Parent                 dbutils.Map   `db:"parent" json:"parent,omitempty"`
-	Geometry               dbutils.Map   `db:"geometry" json:"geometry"`
+	Geometry               dbutils.Map   `db:"geometry" json:"geometry,omitempty"`
 	OrganisationUnitGroups []dbutils.Map `json:"organisationUnitGroups,omitempty"`
 	AttributeValues        []dbutils.Map `json:"attributeValues,omitempty"`
 }
