@@ -646,10 +646,10 @@ func GenerateMetadataPayload(newFacility dbutils.MapAnything) []MetadataObject {
 		switch k {
 		case "extras", "url", "uid", "mflId", "mflParent", "mflUID", "id", "organisationUnitGroups":
 		case "geometry":
-			switch v := newFacility[k].(type) {
-			case Geometry:
-				if v.Type != "" {
-					m := MetadataObject{Operation: "add", Path: fmt.Sprintf("/%s/type", k), Value: newFacility[k]}
+			geoType, ok := newFacility[k].(map[string]interface{})["type"]
+			if ok {
+				if geoType != "" {
+					m := MetadataObject{Operation: "add", Path: fmt.Sprintf("/%s", k), Value: newFacility[k]}
 					metaDataSlice = append(metaDataSlice, m)
 				}
 
