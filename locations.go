@@ -720,14 +720,23 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	}
 	parentOrgUnit := models.GetOrgUnitByMFLID(parent)
 	facility := models.OrganisationUnit{}
-	historicalId := ""
-	if histId, ok := extensions["historicalIdentifier"]; ok {
-		historicalId = histId.(string)
-	}
 	mflUniqueIdentifier := ""
 	if mflUniqueId, ok := extensions["uniqueIdentifier"]; ok {
 		mflUniqueIdentifier = mflUniqueId.(string)
 	}
+	historicalId := ""
+	if histId, ok := extensions["historicalIdentifier"]; ok {
+		historicalId = histId.(string)
+	} else {
+		// no historical identifier
+		uid := models.GetUIDByMFLUID(mflUniqueIdentifier)
+		if len(uid) == 11 {
+			historicalId = uid
+		} else {
+			historicalId = utils.GetUID()
+		}
+	}
+
 	facility.OpeningDate = tempOpening.Format("2006-01-02")
 	facility.ID = historicalId
 	facility.UID = historicalId

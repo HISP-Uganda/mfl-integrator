@@ -43,7 +43,7 @@ CREATE TABLE attribute (
 CREATE TABLE organisationunit(
     id BIGSERIAL NOT NULL PRIMARY KEY,
     uid TEXT NOT NULL UNIQUE,
-    code VARCHAR(50) DEFAULT '',
+    code VARCHAR(50) UNIQUE,
     name TEXT NOT NULL DEFAULT '',
     shortname TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
