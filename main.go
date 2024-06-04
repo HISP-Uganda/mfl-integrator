@@ -114,8 +114,10 @@ func main() {
 	}
 
 	// Start the backend API gin server
-	wg.Add(1)
-	go startAPIServer(&wg)
+	if !*config.DisableHTTPServer {
+		wg.Add(1)
+		go startAPIServer(&wg)
+	}
 
 	wg.Wait()
 }

@@ -20,6 +20,7 @@ import (
 var MFLIntegratorConf Config
 var ForceSync *bool
 var SkipOUSync *bool
+var DisableHTTPServer *bool
 var SkipRequestProcessing *bool // used to ignore the attempt to send request. Don't produce or consume requests
 var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
 var ShowVersion *bool
@@ -51,6 +52,7 @@ func init() {
 
 	ForceSync = flag.Bool("force-sync", false, "Whether to forcefully sync organisation unit hierarchy")
 	SkipOUSync = flag.Bool("skip-ousync", false, "Whether to skip ou and facility sync. But process requests")
+	DisableHTTPServer = flag.Bool("disable-http-server", false, "Whether to disable HTTP Server")
 	SkipRequestProcessing = flag.Bool("skip-request-processing", false, "Whether to skip requests processing")
 	ShowVersion = flag.Bool("version", false, "Display version of MFL Integrator")
 	// FakeSyncToBaseDHIS2 = flag.Bool("fake-sync-to-base-dhis2", false, "Whether to fake sync to base DHIS2")
