@@ -734,6 +734,8 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 			historicalId = uid
 		} else {
 			historicalId = utils.GetUID()
+			ou := models.UsedUID{UID: historicalId, MFLUID: mflUniqueIdentifier}
+			ou.NewUsedUID() // log it to DB
 		}
 	}
 
