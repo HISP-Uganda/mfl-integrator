@@ -1,0 +1,1 @@
+ALTER TABLE orgunitrevision DROP COLUMN district;

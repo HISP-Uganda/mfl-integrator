@@ -476,7 +476,7 @@ func FetchFacilities(mflId, batchId string) {
 
 					// Now create requests to add orgunit to the right orgunit groups
 					ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
-					requestForms := MakeOrgunitGroupsAdditionRequests(
+					requestForms := MakeOrgUnitGroupsAdditionRequests(
 						ouGroupRequests, dbutils.Int(fRequest.ID()), facilityMetadata.UID)
 					for _, rForm := range requestForms {
 						if rForm.Source == "" {
@@ -534,6 +534,7 @@ func FetchFacilities(mflId, batchId string) {
 					// make a revision
 					facilityRevision := models.OrgUnitRevision{
 						OrganisationUnitUID: dbutils.Int(facility.DBID()), Revision: 0, Definition: fj, UID: utils.GetUID(),
+						District: mflId,
 					}
 					facilityRevision.NewOrgUnitRevision()
 
@@ -558,7 +559,7 @@ func FetchFacilities(mflId, batchId string) {
 					}
 					// Now create requests to add orgunit to the right orgunit groups
 					ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
-					requestForms := MakeOrgunitGroupsAdditionRequests(
+					requestForms := MakeOrgUnitGroupsAdditionRequests(
 						ouGroupRequests, dbutils.Int(0), facilityMetadata.UID)
 					for _, rForm := range requestForms {
 						if rForm.Source == "" {
@@ -802,8 +803,8 @@ func CreateOrgUnitGroupPayload(ou models.MetadataOu) map[string][]byte {
 	return ouGroupReqs
 }
 
-// MakeOrgunitGroupsAdditionRequests ....
-func MakeOrgunitGroupsAdditionRequests(
+// MakeOrgUnitGroupsAdditionRequests ....
+func MakeOrgUnitGroupsAdditionRequests(
 	ouGroupPayloads map[string][]byte, dependency dbutils.Int, facilityUID string) []models.RequestForm {
 	var requests []models.RequestForm
 	for k, v := range ouGroupPayloads {

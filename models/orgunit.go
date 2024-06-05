@@ -562,6 +562,7 @@ type OrgUnitRevision struct {
 	OrganisationUnitUID dbutils.Int         `db:"organisationunit_id" json:"organisationUnitUID"`
 	Revision            int64               `db:"revision" json:"revision"`
 	Definition          dbutils.MapAnything `db:"definition" json:"definition"`
+	District            string              `db:"district" json:"district,omitempty"`
 	Created             string              `db:"created" json:"created,omitempty"`
 	Updated             string              `db:"updated" json:"updated,omitempty"`
 }
@@ -599,7 +600,7 @@ func (r *OrgUnitRevision) NewOrgUnitRevision() {
 	dbConn := db.GetDB()
 	r.Revision = r.GetCurrentVersion() + 1
 	_, err := dbConn.NamedExec(`INSERT INTO orgunitrevision(uid, organisationunit_id, is_active, 
-                            revision, definition) VALUES (:uid, :organisationunit_id, TRUE, :revision, :definition)`, r)
+                            revision, definition, district) VALUES (:uid, :organisationunit_id, TRUE, :revision, :definition, :district)`, r)
 	if err != nil {
 		log.WithError(err).Info("Failed to Log Failure")
 		return

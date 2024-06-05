@@ -1,0 +1,1 @@
+ALTER TABLE orgunitrevision ADD district TEXT DEFAULT '';
