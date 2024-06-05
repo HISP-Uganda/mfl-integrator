@@ -269,6 +269,9 @@ CREATE TABLE sync_log(
     updated TIMESTAMPTZ DEFAULT current_timestamp
 );
 
+CREATE INDEX sync_log_uid ON sync_log(uid);
+CREATE INDEX sync_log_mflid ON sync_log(mflid);
+
 CREATE TABLE blacklist (
     id bigserial PRIMARY KEY,
     msisdn text NOT NULL,

@@ -5,4 +5,6 @@ CREATE TABLE used_uids (
     created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (uid, mfluid)
-)
+);
+
+CREATE INDEX used_uids_mfluid ON used_uids(mfluid);

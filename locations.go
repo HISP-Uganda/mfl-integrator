@@ -737,6 +737,7 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 			ou := models.UsedUID{UID: historicalId, MFLUID: mflUniqueIdentifier}
 			ou.NewUsedUID() // log it to DB
 		}
+		log.WithField("Facility", name).Debug("No Historical identifier found for facility %v", historicalId)
 	}
 
 	facility.OpeningDate = tempOpening.Format("2006-01-02")
