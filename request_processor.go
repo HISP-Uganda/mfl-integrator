@@ -777,6 +777,7 @@ func RetryIncompleteRequests() {
 								"CCServerID":  item,
 								"ServerIndex": index,
 								"Retries":     ccServerStatus["retries"],
+								"RequestID":   reqObj.ID,
 							}).Info("+ Incomplete Request Retry")
 						return ProcessRequest(tx, reqObj, ccServer, true, true)
 					} else {
@@ -785,6 +786,7 @@ func RetryIncompleteRequests() {
 								"CCServerID":  item,
 								"ServerIndex": index,
 								"Retries":     ccServerStatus["retries"],
+								"RequestID":   reqObj.ID,
 							}).Info("Skipping incomplete request retry. Max retries exceeded!")
 						reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
 						return nil
