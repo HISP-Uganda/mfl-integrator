@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/config"
+	db2 "github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/lib/pq"
@@ -410,4 +411,22 @@ func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
 	}
 	_ = rows.Close()
 	return *req, nil
+}
+
+func ClearBatchRequests(batch string) {
+	db := db2.GetDB()
+	log.WithField("BatchID", batch).Info("Clearing batch requests")
+	_, err := db.Exec("DELETE FROM requests WHERE batchid = $1", batch)
+	if err != nil {
+		log.WithError(err).Error("Failed to delete batch requests")
+	}
+}
+
+func ClearDistrictRequests(district string) {
+	db := db2.GetDB()
+	log.WithField("BatchID", district).Info("Clearing district requests")
+	_, err := db.Exec("DELETE FROM requests WHERE district = $1", district)
+	if err != nil {
+		log.WithError(err).Error("Failed to delete district requests")
+	}
 }

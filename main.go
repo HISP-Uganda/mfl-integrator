@@ -73,9 +73,11 @@ func main() {
 		// retrying incomplete requests runs every 5 minutes
 		log.WithFields(log.Fields{"RetryCronExpression": config.MFLIntegratorConf.API.MFLRetryCronExpression}).Info(
 			"Request Retry Cron Expression")
-		_, err = s.Cron(config.MFLIntegratorConf.API.MFLRetryCronExpression).Do(RetryIncompleteRequests)
-		if err != nil {
-			log.WithError(err).Error("Error scheduling incomplete request retry task:")
+		if !*config.SkipRequestProcessing {
+			_, err = s.Cron(config.MFLIntegratorConf.API.MFLRetryCronExpression).Do(RetryIncompleteRequests)
+			if err != nil {
+				log.WithError(err).Error("Error scheduling incomplete request retry task:")
+			}
 		}
 		s.StartAsync()
 	}()
@@ -152,7 +154,9 @@ func startAPIServer(wg *sync.WaitGroup) {
 		v2.GET("/syncAttributes/:server", at.SyncAttributes)
 
 		ad := new(controllers.AdminController)
-		v2.GET("/clearsynclog", ad.ClearSyncLog)
+		v2.GET("/clearSyncLog/:district", ad.ClearSyncLog)
+		v2.GET("/clearDistrictRequests/:district", ad.ClearRequestsByDistrict)
+		v2.GET("/clearBatchRequests/:batch", ad.ClearRequestsByBatch)
 
 	}
 	// Handle error response when a route is not defined

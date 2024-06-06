@@ -137,6 +137,10 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 	if r.HasDependency() {
 		if !r.DependencyCompleted(tx) {
 			reason = "Dependency incomplete."
+			log.WithFields(log.Fields{
+				"requestID":  r.ID,
+				"dependency": r.DependsOn,
+			}).Info("Request dependency incomplete")
 			return false
 		}
 	}
@@ -210,10 +214,6 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 		if len(ccServers) > 0 {
 			var ccServerStatus ServerStatus
 			if ccServerObject, ok := models.ServerMap[fmt.Sprintf("%d", ccServers[0])]; ok {
-				// Check if cc server is suspended
-				if ccServerObject.Suspended() {
-					return false
-				}
 				// get server status from request
 				if ccstatusObj, ok := r.CCServersStatus[fmt.Sprintf("%d", ccServerObject.ID())]; ok {
 
@@ -233,13 +233,18 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 					}
 					r.CCServersStatus = ccServerStatusJSON
 					r.updateCCServerStatus(tx)
+					log.WithFields(log.Fields{
+						"server":   ccServerObject.Name(),
+						"serverID": ccServerObject.ID(),
+						"request":  r.ID,
+					}).Info("Request to CC server exceeded max retries")
 					return false
 				}
 				// check if we're out of submission period
 				if !ccServerObject.InSubmissionPeriod(tx) {
 					log.WithFields(log.Fields{
-						"server": ccServerObject.ID,
-						"name":   ccServerObject.Name,
+						"server": ccServerObject.ID(),
+						"name":   ccServerObject.Name(),
 					}).Info("Destination server out of submission period")
 					return false
 				}
@@ -259,8 +264,8 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 					r.CCServersStatus = ccServerStatusJSON
 					r.updateCCServerStatus(tx)
 					log.WithFields(log.Fields{
-						"server": ccServerObject.ID,
-						"name":   ccServerObject.Name,
+						"server": ccServerObject.ID(),
+						"name":   ccServerObject.Name(),
 					}).Info("Destination server is suspended")
 					return false
 				}
@@ -755,19 +760,24 @@ func RetryIncompleteRequests() {
 		} else {
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
-					log.WithFields(log.Fields{"CCServerID": item, "ServerIndex": index}).Info(
-						"+ Incomplete Request Retry")
-					// get cc server's status
-					var ccServerStatus ServerStatus
-					if ccstatusObj, ok := reqObj.CCServersStatus[fmt.Sprintf("%d", item)]; ok {
 
-						if val, ok := ccstatusObj.(ServerStatus); ok {
+					// get cc server's status
+					var ccServerStatus map[string]any
+					if ccStatusObj, ok := reqObj.CCServersStatus[fmt.Sprintf("%d", item)]; ok {
+
+						if val, ok := ccStatusObj.(map[string]any); ok {
 							ccServerStatus = val
 						}
 					}
+					log.WithFields(
+						log.Fields{
+							"CCServerID":  item,
+							"ServerIndex": index,
+							"Retries":     ccServerStatus["retries"],
+						}).Info("+ Incomplete Request Retry")
 
-					// only retry if max retries is not exceeded else expre request
-					if ccServerStatus.Retries <= config.MFLIntegratorConf.Server.MaxRetries {
+					// only retry if max retries is not exceeded else expire request
+					if ccServerStatus["retries"].(int) <= config.MFLIntegratorConf.Server.MaxRetries {
 						return ProcessRequest(tx, reqObj, ccServer, true, true)
 					} else {
 						reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)

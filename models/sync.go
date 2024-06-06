@@ -48,6 +48,7 @@ func GetLastSyncDate(mflId string) string {
 
 func ClearLogs(mflId string) {
 	db := db2.GetDB()
+	log.WithField("MFLUID", mflId).Info("Clearing logs")
 	_, err := db.Exec("DELETE FROM sync_log WHERE mflid = $1", mflId)
 	if err != nil {
 		log.WithError(err).Error("Failed to clear sync logs")
