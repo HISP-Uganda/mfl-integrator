@@ -151,6 +151,9 @@ func startAPIServer(wg *sync.WaitGroup) {
 		at := new(controllers.AttributeController)
 		v2.GET("/syncAttributes/:server", at.SyncAttributes)
 
+		ad := new(controllers.AdminController)
+		v2.GET("/clearsynclog", ad.ClearSyncLog)
+
 	}
 	// Handle error response when a route is not defined
 	router.NoRoute(func(c *gin.Context) {

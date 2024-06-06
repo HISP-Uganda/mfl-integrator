@@ -519,11 +519,11 @@ func FetchFacilities(mflId, batchId string) {
 				} else {
 					// metadataPayload := models.GenerateMetadataPayload(fj)
 					old, _ := json.Marshal(lastestRevision)
-					new, _ := json.Marshal(facility)
+					newDefinition, _ := json.Marshal(facility)
 					metadataPayloadFromDiff := models.GenerateMetadataPayload(diffMap)
 					log.WithFields(log.Fields{
 						"UID": facility.UID, "ValidUID": facility.ValidateUID(),
-						"New":  string(new),
+						"New":  string(newDefinition),
 						"OLD":  string(old),
 						"Diff": diffMap, "parent": facility.ParentID,
 						"MetadataFromDiff": metadataPayloadFromDiff,
@@ -540,7 +540,7 @@ func FetchFacilities(mflId, batchId string) {
 
 					// Generate Metadata Update object - for facility with valid UID
 					if facility.ValidateUID() {
-						reqF := GenerateUpdateMetadataRequest(metadataPayloadFromDiff, facility.UID)
+						reqF := GenerateUpdateMetadataRequest(metadataPayloadFromDiff, facility.UID, mflId)
 						reqF.BatchID = batchId
 						_, err := reqF.Save(dbConn)
 						if err != nil {
@@ -829,7 +829,7 @@ func MakeOrgUnitGroupsAdditionRequests(
 	return requests
 }
 
-func GenerateUpdateMetadataRequest(update []models.MetadataObject, facilityUID string) models.RequestForm {
+func GenerateUpdateMetadataRequest(update []models.MetadataObject, facilityUID string, district string) models.RequestForm {
 	req := models.RequestForm{}
 	body, err := json.Marshal(update)
 	if err != nil {
@@ -841,6 +841,7 @@ func GenerateUpdateMetadataRequest(update []models.MetadataObject, facilityUID s
 		Source: "localhost", Destination: "base_OU_Update", ContentType: "application/json-patch+json",
 		Year: fmt.Sprintf("%d", year), Week: fmt.Sprintf("%d", week),
 		Month: fmt.Sprintf("%d", int(time.Now().Month())), Period: "", Facility: facilityUID, BatchID: "", SubmissionID: "",
+		District:  district,
 		CCServers: strings.Split(config.MFLIntegratorConf.API.MFLCCDHIS2UpdateServers, ","),
 		URLSuffix: fmt.Sprintf("/%s", facilityUID),
 		Body:      string(body),

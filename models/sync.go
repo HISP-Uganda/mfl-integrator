@@ -45,3 +45,15 @@ func GetLastSyncDate(mflId string) string {
 	}
 	return date
 }
+
+func ClearLogs(mflId string) {
+	db := db2.GetDB()
+	_, err := db.Exec("DELETE FROM sync_log WHERE mflid = $1", mflId)
+	if err != nil {
+		log.WithError(err).Error("Failed to clear sync logs")
+	}
+	_, err = db.Exec("DELETE FROM orgunitrevision WHERE district = $1", mflId)
+	if err != nil {
+		log.WithError(err).Error("Failed to clear orgUnit revisions for %s", mflId)
+	}
+}
