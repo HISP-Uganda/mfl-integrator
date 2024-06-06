@@ -769,17 +769,23 @@ func RetryIncompleteRequests() {
 							ccServerStatus = val
 						}
 					}
-					log.WithFields(
-						log.Fields{
-							"CCServerID":  item,
-							"ServerIndex": index,
-							"Retries":     ccServerStatus["retries"],
-						}).Info("+ Incomplete Request Retry")
 
 					// only retry if max retries is not exceeded else expire request
-					if ccServerStatus["retries"].(int) <= config.MFLIntegratorConf.Server.MaxRetries {
+					if int(ccServerStatus["retries"].(float64)) <= config.MFLIntegratorConf.Server.MaxRetries {
+						log.WithFields(
+							log.Fields{
+								"CCServerID":  item,
+								"ServerIndex": index,
+								"Retries":     ccServerStatus["retries"],
+							}).Info("+ Incomplete Request Retry")
 						return ProcessRequest(tx, reqObj, ccServer, true, true)
 					} else {
+						log.WithFields(
+							log.Fields{
+								"CCServerID":  item,
+								"ServerIndex": index,
+								"Retries":     ccServerStatus["retries"],
+							}).Info("Skipping incomplete request retry. Max retries exceeded!")
 						reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
 						return nil
 					}
