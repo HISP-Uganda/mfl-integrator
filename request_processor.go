@@ -403,7 +403,7 @@ func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex
 	// RequestsMap[""] = 6
 	for {
 
-		log.Println("Going to read requests")
+		// log.Println("Going to read requests")
 		rows, err := db.Queryx(`
                 SELECT 
                     id FROM requests 

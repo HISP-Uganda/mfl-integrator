@@ -500,11 +500,11 @@ func FetchFacilities(mflId, batchId string) {
 			} else {
 				// facility exists
 
-				var fj, lastestRevision dbutils.MapAnything
+				var fj, latestRevision dbutils.MapAnything
 				_ = json.Unmarshal(facilityJSON, &fj)
-				_ = json.Unmarshal(facility.GetLatestRevision(), &lastestRevision)
+				_ = json.Unmarshal(facility.GetLatestRevision(), &latestRevision)
 				fj["parent"] = facility.Parent()
-				newMatchedOld, diffMap, err := models.CompareDefinition(fj, lastestRevision)
+				newMatchedOld, diffMap, err := models.CompareDefinition(fj, latestRevision)
 				if err != nil {
 					log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
 				}
@@ -518,7 +518,7 @@ func FetchFacilities(mflId, batchId string) {
 					continue
 				} else {
 					// metadataPayload := models.GenerateMetadataPayload(fj)
-					old, _ := json.Marshal(lastestRevision)
+					old, _ := json.Marshal(latestRevision)
 					newDefinition, _ := json.Marshal(facility)
 					metadataPayloadFromDiff := models.GenerateMetadataPayload(diffMap)
 					log.WithFields(log.Fields{
@@ -702,7 +702,8 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 	}
 	lat := location.Resource.Position.Latitude
 	long := location.Resource.Position.Longitude
-	coordinates := []json.Number{lat, long}
+	// XXX https://docs.dhis2.org/en/use/user-guides/dhis-core-version-240/configuring-the-system/maps.html
+	coordinates := []json.Number{long, lat} // XXX DHIS2 uses  EPSG:4326 which does longitude/latitude
 	if lat.String() == "0.0" && long.String() == "0.0" {
 		coordinates = []json.Number{}
 	}
