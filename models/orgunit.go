@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
+
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	log "github.com/sirupsen/logrus"
 	"github.com/twpayne/go-geom"
 	"github.com/twpayne/go-geom/encoding/geojson"
-	"reflect"
-	"regexp"
 )
 
 type Geometry struct {
@@ -64,18 +65,21 @@ func (ol *OrgUnitLevel) NewOrgUnitLevel() {
 }
 
 type OrgUnitGroup struct {
-	ID        string `db:"id" json:"id"`
-	UID       string `db:"uid" json:"uid"`
-	Code      string `db:"code" json:"code,omitempty"`
-	Name      string `db:"name" json:"name"`
-	ShortName string `db:"shortname" json:"shortName,omitempty"`
-	Created   string `db:"created" json:"created,omitempty"`
-	Updated   string `db:"updated" json:"updated,omitempty"`
+	ID        string  `db:"id" json:"id"`
+	UID       string  `db:"uid" json:"uid"`
+	Code      *string `db:"code" json:"code,omitempty"`
+	Name      string  `db:"name" json:"name"`
+	ShortName string  `db:"shortname" json:"shortName,omitempty"`
+	Created   string  `db:"created" json:"created,omitempty"`
+	Updated   string  `db:"updated" json:"updated,omitempty"`
 }
 
 func (og *OrgUnitGroup) DBID() int64 {
 	dbConn := db.GetDB()
 	var id sql.NullInt64
+	if og.UID == "" {
+		og.UID = og.ID
+	}
 	err := dbConn.Get(&id, `SELECT id FROM orgunitgroup WHERE uid = $1`, og.UID)
 	if err != nil {
 		log.WithError(err).WithField("GroupUID", og.UID).Info("Failed to get orgunit group DBID")
@@ -203,7 +207,7 @@ type OrganisationUnit struct {
 func (o *OrganisationUnit) DBID() int64 {
 	dbConn := db.GetDB()
 	var id sql.NullInt64
-	err := dbConn.Get(&id, `SELECT id FROM organisationunit WHERE uid = $1`, o.ID)
+	err := dbConn.Get(&id, `SELECT id FROM organisationunit WHERE uid = $1`, o.UID)
 	if err != nil {
 		log.WithError(err).Info("Failed to get organisation unit id")
 	}
@@ -220,7 +224,7 @@ func (o *OrganisationUnit) Parent() map[string]string {
 	dbConn := db.GetDB()
 	parentUID := ""
 	parentMap := make(map[string]string)
-	err := dbConn.Get(&parentUID, `SELECT uid FROM organisationunit WHERE mflid = $1`, o.MFLParent)
+	err := dbConn.Get(&parentUID, `SELECT uid FROM organisationunit WHERE mfluid = $1`, o.MFLParent)
 	if err != nil {
 		log.WithField("UID", o.UID).WithError(err).Error("Could not get parent ID")
 		return nil
@@ -268,7 +272,7 @@ func (o *OrganisationUnit) ParentByUID() dbutils.Map {
 
 func (o *OrganisationUnit) GetGroups() []OrgUnitGroup {
 	dbConn := db.GetDB()
-	ouGroups := []OrgUnitGroup{}
+	var ouGroups []OrgUnitGroup
 	err := dbConn.Select(&ouGroups, `SELECT * FROM orgunitgroup WHERE id IN 
                 (SELECT orgunitgroupid FROM orgunitgroupmembers WHERE organisationunitid = $1)`, o.DBID())
 	if err != nil {
@@ -334,6 +338,25 @@ func GetOUByMFLParentId(mflParentId string) dbutils.Int {
 		log.WithError(err).Info("Failed to get organisation unit")
 	}
 	return id
+}
+
+func GetOUByMFLParentUID(mflParentUID string) dbutils.Int {
+	if mflParentUID == "" {
+		return 0
+	}
+
+	dbConn := db.GetDB()
+	var id dbutils.Int
+	err := dbConn.Get(&id, `SELECT id FROM organisationunit WHERE mfluid = $1`, mflParentUID)
+	if err == nil {
+		return id
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0
+	}
+
+	log.WithError(err).WithField("mflParentUID", mflParentUID).Error("GetOUByMFLParentUID: query failed")
+	return 0
 }
 
 func (o *OrganisationUnit) OrganisationUnitDBFields() []string {
@@ -453,7 +476,31 @@ func GetOrgUnitByMFLID(mflid string) OrganisationUnit {
 		err := rows.Scan(&id, &lvl, &path, &uid)
 		if err != nil {
 			// log.Fatalln("==>", err)
-			log.WithError(err).Error("Error reading request from queue:")
+			log.WithError(err).Error("Error reading parent organisation unit by mflid:")
+		}
+		ou.ID = id
+		ou.Level = lvl
+		ou.Path = path
+		ou.UID = uid
+	}
+	_ = rows.Close()
+	return ou
+}
+
+func GetOrgUnitByMFLUID(mfluid string) OrganisationUnit {
+	dbConn := db.GetDB()
+	var ou OrganisationUnit
+	rows, err := dbConn.Queryx(`SELECT id,hierarchylevel,path, uid FROM organisationunit WHERE mfluid= $1`, mfluid)
+	if err != nil {
+		log.WithError(err).WithField("MFLUID", mfluid).Info("Failed to get orgunit DBUID")
+	}
+	for rows.Next() {
+		var id, path, uid string
+		var lvl int
+		err := rows.Scan(&id, &lvl, &path, &uid)
+		if err != nil {
+			// log.Fatalln("==>", err)
+			log.WithError(err).Error("Error reading parent organisation unit by mfluid:")
 		}
 		ou.ID = id
 		ou.Level = lvl
@@ -662,4 +709,15 @@ func GenerateMetadataPayload(newFacility dbutils.MapAnything) []MetadataObject {
 		}
 	}
 	return metaDataSlice
+}
+
+func GetOrgUnitByUID(uid string) (error, OrganisationUnit) {
+	dbConn := db.GetDB()
+	var orgUnit OrganisationUnit
+	err := dbConn.Get(&orgUnit, `SELECT id, uid, name, path FROM organisationunit WHERE uid = $1`, uid)
+	if err != nil {
+		log.WithField("UID", uid).WithError(err).Info("Failed to get Organisation Unit")
+		return err, orgUnit
+	}
+	return nil, orgUnit
 }

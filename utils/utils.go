@@ -203,6 +203,7 @@ func PostWithBasicAuth(
 	baseUrl string, data interface{}, username, password string) ([]byte, error) {
 
 	requestBody, err := json.Marshal(data)
+	// log.WithFields(log.Fields{"Request-Body": string(requestBody)}).Info("THE REQUEST BODY")
 	if err != nil {
 		log.WithError(err).WithFields(log.Fields{"Data": fmt.Sprintf("%v", data)}).Info("XXXXX ERROR")
 		return nil, err

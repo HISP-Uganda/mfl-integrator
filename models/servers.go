@@ -4,78 +4,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/HISP-Uganda/mfl-integrator/clients"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/buger/jsonparser"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
-	"net/url"
-	"reflect"
-	"regexp"
-	"runtime"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/lib/pq"
 )
-
-func init() {
-	var migrationsDir string
-	currentOS := runtime.GOOS
-	switch currentOS {
-	case "windows":
-		migrationsDir = "file:///C:\\ProgramData\\MFLIntegrator"
-	case "darwin", "linux":
-		migrationsDir = config.MFLIntegratorConf.Server.MigrationsDirectory
-	default:
-		migrationsDir = "file://db/migrations"
-	}
-	m, err := migrate.New(
-		// "file:///usr/share/mflintegrator/db/migrations", // file://db/migrations
-		migrationsDir,
-		config.MFLIntegratorConf.Database.URI)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Fatal("Error running migration:", err)
-	}
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-	CreateBaseDHIS2Server()
-	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
-
-	if err != nil {
-		log.WithError(err).Info("Failed to load servers")
-	}
-	ServerMap = make(map[string]Server)
-	ServerMapByName = make(map[string]Server)
-	for rows.Next() {
-		srv := Server{}
-
-		err := rows.StructScan(&srv.s)
-		if err != nil {
-			log.Fatalln("Server Loading ==>", err)
-		}
-
-		ServerMap[strconv.Itoa(int(srv.s.ID))] = srv
-		ServerMapByName[srv.s.Name] = srv
-		// log.WithField("SERVER", srv.s).Info("=====>")
-
-	}
-	// log.WithField("ServerMapByName", ServerMapByName).Info("========>")
-	_ = rows.Close()
-}
 
 // ServerMap is the List of Servers
 var ServerMap map[string]Server
@@ -118,6 +66,36 @@ type Server struct {
 		Updated                 time.Time           `db:"updated" json:"updated,omitempty"`
 		AllowedSources          []string            `json:"allowedSources,omitempty"`
 	}
+}
+
+// ReloadServersFromDB refreshes the in-memory ServerMap and ServerMapByName from the DB.
+// Call this after migrations and after importing servers from config files.
+func ReloadServersFromDB() {
+	// Ensure the base server exists (keeps existing behavior).
+	// If you later change CreateBaseDHIS2Server to return an error, wire it in here.
+	CreateBaseDHIS2Server()
+	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
+
+	if err != nil {
+		log.WithError(err).Info("Failed to load servers")
+	}
+	ServerMap = make(map[string]Server)
+	ServerMapByName = make(map[string]Server)
+	for rows.Next() {
+		srv := Server{}
+
+		err := rows.StructScan(&srv.s)
+		if err != nil {
+			log.Fatalln("Server Loading ==>", err)
+		}
+
+		ServerMap[strconv.Itoa(int(srv.s.ID))] = srv
+		ServerMapByName[srv.s.Name] = srv
+		// log.WithField("SERVER", srv.s).Info("=====>")
+
+	}
+	// log.WithField("ServerMapByName", ServerMapByName).Info("========>")
+	_ = rows.Close()
 }
 
 // ServerAllowedApps hold servers and servers they allow to communicate with
@@ -529,11 +507,11 @@ func CreateServers(db *sqlx.DB, servers []Server) (dbutils.MapAnything, error) {
 func CreateBaseDHIS2Server() {
 	metadataServer := &Server{}
 	metadataServer.s.Name = "base_OU"
-	metadataServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/metadata.json"
-	metadataServer.s.Username = config.MFLIntegratorConf.API.MFLDHIS2User
-	metadataServer.s.Password = config.MFLIntegratorConf.API.MFLDHIS2Password
+	metadataServer.s.URL = config.MFLIntegratorConf.API.DHIS2BaseURL + "/metadata.json"
+	metadataServer.s.Username = config.MFLIntegratorConf.API.DHIS2User
+	metadataServer.s.Password = config.MFLIntegratorConf.API.DHIS2Password
 	metadataServer.s.AuthMethod = "Basic"
-	metadataServer.s.AuthToken = config.MFLIntegratorConf.API.MFLDHIS2PAT
+	metadataServer.s.AuthToken = config.MFLIntegratorConf.API.DHIS2PAT
 	metadataServer.s.EndPointType = "OUMetadata"
 
 	metadataServer.s.IPAddress = "*"
@@ -554,14 +532,14 @@ func CreateBaseDHIS2Server() {
 	ouGroupAddServer := *metadataServer
 	ouGroupAddServer.s.Name = "base_OU_GroupAdd"
 	ouGroupAddServer.s.HTTPMethod = "PATCH"
-	ouGroupAddServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/organisationUnitGroups"
+	ouGroupAddServer.s.URL = config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnitGroups"
 	ouGroupAddServer.s.EndPointType = "OU_ORGUNIT_GROUP_ADD"
 	ouGroupAddServer.s.URLParams = make(dbutils.MapAnything)
 
 	ouUpdateServer := *metadataServer
 	ouUpdateServer.s.Name = "base_OU_Update"
 	ouUpdateServer.s.HTTPMethod = "PATCH"
-	ouUpdateServer.s.URL = config.MFLIntegratorConf.API.MFLDHIS2BaseURL + "/organisationUnits"
+	ouUpdateServer.s.URL = config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnits"
 	ouUpdateServer.s.EndPointType = "OU_ORGUNIT_UPDATE"
 	ouUpdateServer.s.URLParams = make(dbutils.MapAnything)
 
@@ -573,32 +551,261 @@ func CreateBaseDHIS2Server() {
 	log.WithFields(log.Fields{"Server": metadataServer.UID(), "Summary": summary}).Info("Server Creation Summary")
 }
 
+//func SyncLocationsToServer(serverName string) {
+//	// Servers in this config can receive the base DHIS2 organisation unit hierarchy
+//	log.WithField("CCDHIS2", serverName).Info("CC Hierarchy Servers")
+//	server, err := GetServerByName(serverName)
+//	if err != nil {
+//		log.WithError(err).Info("Could not proceed to CC hierarchy to server")
+//		return
+//	}
+//	// check if we already have ous in the instance and only create if none present
+//	ouURL := server.URL()
+//	baseDHIS2URL, err := utils.GetDHIS2BaseURL(ouURL)
+//	if err != nil {
+//		log.WithError(err).Info("CAUTION DHIS2 API URL should have /api/ part")
+//		return
+//	}
+//	p := url.Values{}
+//	p.Add("fields", "id,name")
+//	p.Add("paging", "true")
+//	p.Add("pageSize", "1")
+//	p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.DHIS2FacilityLevel-1))
+//	chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?"
+//	//if strings.LastIndex(ouURL, "?") == len(ouURL)-1 {
+//	//	ouURL += p.Encode()
+//	//} else {
+//	//	ouURL += "?" + p.Encode()
+//	//}
+//	chekOusURL += p.Encode()
+//	log.WithFields(log.Fields{"ServerURL": chekOusURL, "Name": server.Name()}).Info("Trying to send hierarchy to server")
+//
+//	var respBody []byte
+//	switch server.AuthMethod() {
+//	case "Basic":
+//		resp, err := utils.GetWithBasicAuth(chekOusURL, server.Username(), server.Password())
+//		respBody = resp
+//		if err != nil {
+//			log.WithError(err).Error("Failed to get ous from server")
+//			return
+//		}
+//
+//	case "Token":
+//		resp, err := utils.GetWithToken(chekOusURL, server.AuthToken())
+//		respBody = resp
+//		if err != nil {
+//			log.WithError(err).Error("Failed to get ous from server")
+//			return
+//		}
+//	default:
+//		// pass
+//	}
+//	if respBody != nil {
+//		v, _, _, err := jsonparser.Get(respBody, "pager", "total")
+//		if err != nil {
+//			log.WithError(err).Error("json parser failed to get pager.total key")
+//		}
+//		if string(v) != "0" && !*config.ForceSync {
+//
+//			log.WithField("ForceSync", *config.ForceSync).Info("FORCE SYNC >>>>>>>>>>")
+//			return // we have ous already
+//		}
+//		log.WithField("Server", serverName).Info("We can now sync the hierarchy!!")
+//		//Send Ou Levels
+//		syncOuLevels := GenerateOuLevelMetadata()
+//		levelsPayload := make(map[string][]MetadataOuLevel)
+//		levelsPayload["organisationUnitLevels"] = syncOuLevels
+//		SendMetadata(server, levelsPayload)
+//
+//		// send Ou Groups
+//		syncOuGroups := GenerateOuGroupsMetadata()
+//		groupsPayload := make(map[string][]MetadataOuGroup)
+//		groupsPayload["organisationUnitGroups"] = syncOuGroups
+//		SendMetadata(server, groupsPayload)
+//
+//		// send Attributes
+//		syncAttributes := GenerateAttributeMetadata()
+//		attributesPayload := make(map[string][]AttributeMetadata)
+//		attributesPayload["attributes"] = syncAttributes
+//		SendMetadata(server, attributesPayload)
+//
+//		// Send Ous
+//		// for level := 1; level < 3; level++ {
+//		for level := 1; level < config.MFLIntegratorConf.API.DHIS2FacilityLevel; level++ {
+//
+//			syncOus := GenerateOuMetadataByLevel(level)
+//			//for _, ou := range syncOus {
+//			//	pp, _ := json.Marshal(ou)
+//			//	log.WithFields(log.Fields{"Payload": string(pp), "Server": serverName, "UID": ou.UID, "ID": ou.ID}).Info("DEBUGGGGGGGG")
+//			//	rBody := sendMetadata(server, ou)
+//			//	if rBody != nil {
+//			//		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+//			//	}
+//			//}
+//			ouChunks := lo.Chunk(syncOus, config.MFLIntegratorConf.API.MetadataBatchSize)
+//			// ouChunks := lo.Chunk(syncOus, 1)
+//
+//			for _, chunk := range ouChunks {
+//				payload := make(map[string][]MetadataOu)
+//				payload["organisationUnits"] = chunk
+//				log.WithFields(log.Fields{"Parent": chunk[0].Parent, "Name": chunk[0].Name,
+//					"Level": chunk[0].Level, "openingDate": chunk[0].OpeningDate}).Info("OUDATA =>>>>>>>>")
+//				//
+//				rBody := SendMetadata(server, payload)
+//				if rBody != nil {
+//					log.WithFields(log.Fields{"Server": serverName,
+//						"Response": string(rBody)}).Info("Metadata Import")
+//				}
+//				if level < config.MFLIntegratorConf.API.DHIS2FacilityLevel-1 {
+//					time.Sleep(10 * time.Second) // give a longer time to ensure creation on the other side
+//				} else {
+//					time.Sleep(3 * time.Second)
+//				}
+//				chunkWithOuGroups := lo.Map(chunk, func(ou MetadataOu, _ int) MetadataOu {
+//					err, o := GetOrgUnitByUID(ou.UID)
+//					if err != nil {
+//						// ou.OrganisationUnitGroups = o.GetGroups()
+//						return ou
+//					}
+//					// create a slice of dbutils.Map object from which every member in groups above is turned in a dbutils.Map object
+//					groupsMap := lo.Map(o.GetGroups(), func(g OrgUnitGroup, _ int) dbutils.Map {
+//						m := dbutils.Map{}
+//						m.Set("id", g.UID)
+//						// m.Set("name", g.Name)
+//						return m
+//					})
+//					ou.OrganisationUnitGroups = groupsMap
+//
+//					return ou
+//				})
+//				allGroups := lo.FlatMap(chunkWithOuGroups, func(meta MetadataOu, idx int) []map[string]any {
+//					var ret []map[string]any
+//					groups := lo.Map(meta.OrganisationUnitGroups, func(g dbutils.Map, _ int) string {
+//						return g.Get("id", "").(string)
+//					})
+//					m := make(map[string]any)
+//					if len(meta.OrganisationUnitGroups) > 0 {
+//						// m.Set("organisationUnit", meta.UID)
+//						// m.Set("groups", groups)
+//						m["organisationUnit"] = meta.UID
+//						m["groups"] = groups
+//						ret = append(ret, m)
+//					}
+//					return ret
+//				})
+//
+//				//grouped := make(map[string][]string)
+//				//for _, item := range allGroups {
+//				//	orgUnit, ok := item["organisationUnit"].(string)
+//				//	if !ok {
+//				//		continue // Skip if orgUnit is not a string
+//				//	}
+//				//
+//				//	groups, ok := item["groups"].([]string)
+//				//	if !ok {
+//				//		continue // Skip if groups is not a []string
+//				//	}
+//				//
+//				//	// Add the orgUnit to each group in the groups slice
+//				//	for _, group := range groups {
+//				//		grouped[group] = append(grouped[group], orgUnit)
+//				//	}
+//				//}
+//
+//				// Use lo functions for grouping
+//				grouped := lo.Reduce(allGroups, func(acc map[string][]string, item map[string]any, _ int) map[string][]string {
+//					orgUnit, _ := item["organisationUnit"].(string)
+//					groups, _ := item["groups"].([]string)
+//
+//					for _, group := range groups {
+//						acc[group] = append(acc[group], orgUnit)
+//					}
+//					return acc
+//				}, make(map[string][]string))
+//
+//				log.Infof("All Groups: %v", grouped)
+//				// var groupAddSlice []MetadataObject
+//				// for each key in grouped data, generate a []MetadataObject
+//				ouGroupReqs := make(map[string][]MetadataObject)
+//				for k, val := range grouped {
+//					var groupAddSlice []MetadataObject
+//					for _, uid := range val {
+//						groupAddSlice = append(groupAddSlice, MetadataObject{
+//							Operation: "add",
+//							Path:      "/organisationUnits/-",
+//							Value:     map[string]string{"id": uid},
+//						})
+//					}
+//					ouGroupReqs[k] = groupAddSlice
+//				}
+//				// check if serverName contains "Group_Add" at the end, if not add it and find server with GetServerByName
+//				if !strings.Contains(serverName, "GroupAdd") && !strings.HasSuffix(serverName, "GroupAdd") {
+//					groupsServer, err := GetServerByName(serverName + "_GroupAdd")
+//					if err != nil {
+//						log.WithError(err).Info("Could not find server with name: " + serverName + "_GroupAdd")
+//						continue
+//					}
+//					dhis2Server := clients.Dhis2Server{
+//						BaseUrl:    groupsServer.URL(),
+//						Username:   groupsServer.Username(),
+//						Password:   groupsServer.Password(),
+//						AuthMethod: groupsServer.AuthMethod(),
+//						AuthToken:  groupsServer.AuthToken(),
+//					}
+//					client, err := dhis2Server.NewDhis2Client()
+//					if err != nil {
+//						log.WithError(err).Info("Could not create client for server: " + groupsServer.URL())
+//						continue
+//					}
+//					client.RestClient.SetHeader("Content-Type", "application/json-patch+json")
+//
+//					for k, val := range ouGroupReqs {
+//						resp, err := client.PatchResource(fmt.Sprintf("organisationUnitGroups/%s", k), val)
+//						if err != nil {
+//							log.WithError(err).WithField("Server", groupsServer.URL()).Info("Failed to add group to org units")
+//						} else {
+//							log.WithFields(log.Fields{"Server": groupsServer.URL(), "Response": string(resp.Body())}).Info("Group Add Import")
+//						}
+//
+//					}
+//				}
+//
+//			}
+//
+//		}
+//
+//	}
+//}
+
 func SyncLocationsToServer(serverName string) {
 	// Servers in this config can receive the base DHIS2 organisation unit hierarchy
 	log.WithField("CCDHIS2", serverName).Info("CC Hierarchy Servers")
 	server, err := GetServerByName(serverName)
 	if err != nil {
 		log.WithError(err).Info("Could not proceed to CC hierarchy to server")
+		return
 	}
-	// check if we already have ous in the instance and only create if none present
+
 	ouURL := server.URL()
 	baseDHIS2URL, err := utils.GetDHIS2BaseURL(ouURL)
 	if err != nil {
 		log.WithError(err).Info("CAUTION DHIS2 API URL should have /api/ part")
 		return
 	}
+
+	// Resolve GroupAdd server ONCE (same base URL, different endpoint)
+	groupsServer, err := GetServerByName(serverName + "_GroupAdd")
+	if err != nil {
+		log.WithError(err).Info("Could not find server with name: " + serverName + "_GroupAdd")
+		return
+	}
+
 	p := url.Values{}
 	p.Add("fields", "id,name")
 	p.Add("paging", "true")
 	p.Add("pageSize", "1")
-	p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel-1))
-	chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?"
-	//if strings.LastIndex(ouURL, "?") == len(ouURL)-1 {
-	//	ouURL += p.Encode()
-	//} else {
-	//	ouURL += "?" + p.Encode()
-	//}
-	chekOusURL += p.Encode()
+	p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.DHIS2FacilityLevel-1))
+	chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?" + p.Encode()
 	log.WithFields(log.Fields{"ServerURL": chekOusURL, "Name": server.Name()}).Info("Trying to send hierarchy to server")
 
 	var respBody []byte
@@ -610,7 +817,6 @@ func SyncLocationsToServer(serverName string) {
 			log.WithError(err).Error("Failed to get ous from server")
 			return
 		}
-
 	case "Token":
 		resp, err := utils.GetWithToken(chekOusURL, server.AuthToken())
 		respBody = resp
@@ -621,71 +827,185 @@ func SyncLocationsToServer(serverName string) {
 	default:
 		// pass
 	}
-	if respBody != nil {
-		v, _, _, err := jsonparser.Get(respBody, "pager", "total")
-		if err != nil {
-			log.WithError(err).Error("json parser failed to get pager.total key")
-		}
-		if string(v) != "0" && !*config.ForceSync {
 
-			log.WithField("ForceSync", *config.ForceSync).Info("FORCE SYNC >>>>>>>>>>")
-			return // we have ous already
-		}
-		log.WithField("Server", serverName).Info("We can now sync the hierarchy!!")
-		//Send Ou Levels
-		syncOuLevels := GenerateOuLevelMetadata()
-		levelsPayload := make(map[string][]MetadataOuLevel)
-		levelsPayload["organisationUnitLevels"] = syncOuLevels
-		SendMetadata(server, levelsPayload)
+	if respBody == nil {
+		return
+	}
 
-		// send Ou Groups
-		syncOuGroups := GenerateOuGroupsMetadata()
-		groupsPayload := make(map[string][]MetadataOuGroup)
-		groupsPayload["organisationUnitGroups"] = syncOuGroups
-		SendMetadata(server, groupsPayload)
+	v, _, _, err := jsonparser.Get(respBody, "pager", "total")
+	if err != nil {
+		log.WithError(err).Error("json parser failed to get pager.total key")
+	}
+	if string(v) != "0" && !*config.ForceSync {
+		log.WithField("ForceSync", *config.ForceSync).Info("FORCE SYNC >>>>>>>>>>")
+		return // we have ous already
+	}
 
-		// send Attributes
-		syncAttributes := GenerateAttributeMetadata()
-		attributesPayload := make(map[string][]AttributeMetadata)
-		attributesPayload["attributes"] = syncAttributes
-		SendMetadata(server, attributesPayload)
+	log.WithField("Server", serverName).Info("We can now sync the hierarchy!!")
 
-		// Send Ous
-		// for level := 1; level < 3; level++ {
-		for level := 1; level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel; level++ {
+	//Send Ou Levels
+	syncOuLevels := GenerateOuLevelMetadata()
+	levelsPayload := make(map[string][]MetadataOuLevel)
+	levelsPayload["organisationUnitLevels"] = syncOuLevels
+	SendMetadata(server, levelsPayload)
 
-			syncOus := GenerateOuMetadataByLevel(level)
-			//for _, ou := range syncOus {
-			//	pp, _ := json.Marshal(ou)
-			//	log.WithFields(log.Fields{"Payload": string(pp), "Server": serverName, "UID": ou.UID, "ID": ou.ID}).Info("DEBUGGGGGGGG")
-			//	rBody := sendMetadata(server, ou)
-			//	if rBody != nil {
-			//		log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
-			//	}
-			//}
-			ouChunks := lo.Chunk(syncOus, config.MFLIntegratorConf.API.MFLMetadataBatchSize)
-			// ouChunks := lo.Chunk(syncOus, 1)
+	// send Ou Groups
+	syncOuGroups := GenerateOuGroupsMetadata()
+	groupsPayload := make(map[string][]MetadataOuGroup)
+	groupsPayload["organisationUnitGroups"] = syncOuGroups
+	SendMetadata(server, groupsPayload)
 
-			for _, chunck := range ouChunks {
-				payload := make(map[string][]MetadataOu)
-				payload["organisationUnits"] = chunck
-				log.WithFields(log.Fields{"Parant": chunck[0].Parent, "Name": chunck[0].Name, "Level": chunck[0].Level}).Info("OUDATA =>>>>>>>>")
+	// send Attributes
+	syncAttributes := GenerateAttributeMetadata()
+	attributesPayload := make(map[string][]AttributeMetadata)
+	attributesPayload["attributes"] = syncAttributes
+	SendMetadata(server, attributesPayload)
 
-				rBody := SendMetadata(server, payload)
-				if rBody != nil {
-					log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
-				}
-				if level < config.MFLIntegratorConf.API.MFLDHIS2FacilityLevel-1 {
-					time.Sleep(5 * time.Second) // give a longer time to ensure creation on the other side
-				} else {
-					time.Sleep(3 * time.Second)
-				}
+	dhis2Server := clients.Dhis2Server{
+		BaseUrl:    groupsServer.URL(),
+		Username:   groupsServer.Username(),
+		Password:   groupsServer.Password(),
+		AuthMethod: groupsServer.AuthMethod(),
+		AuthToken:  groupsServer.AuthToken(),
+	}
+	client, err := dhis2Server.NewDhis2Client()
+	if err != nil {
+		log.WithError(err).Info("Could not create client for server: " + groupsServer.URL())
+		return
+	}
+	client.RestClient.SetHeader("Content-Type", "application/json-patch+json")
 
+	// Send Ous
+	for level := 1; level < config.MFLIntegratorConf.API.DHIS2FacilityLevel; level++ {
+		syncOus := GenerateOuMetadataByLevel(level)
+		ouChunks := lo.Chunk(syncOus, config.MFLIntegratorConf.API.MetadataBatchSize)
+
+		for _, chunk := range ouChunks {
+			if len(chunk) == 0 {
+				continue
 			}
 
-		}
+			payload := make(map[string][]MetadataOu)
+			payload["organisationUnits"] = chunk
 
+			log.WithFields(log.Fields{"Parent": chunk[0].Parent, "Name": chunk[0].Name,
+				"Level": chunk[0].Level, "openingDate": chunk[0].OpeningDate}).Info("OUDATA =>>>>>>>>")
+
+			rBody := SendMetadata(server, payload)
+			if rBody != nil {
+				log.WithFields(log.Fields{"Server": serverName, "Response": string(rBody)}).Info("Metadata Import")
+			}
+
+			// Instead of fixed sleeps, wait until at least some OUs from this chunk exist in target
+			uidList := lo.Map(chunk, func(ou MetadataOu, _ int) string { return ou.UID })
+			existingUIDs := waitForOrganisationUnits(groupsServer, baseDHIS2URL, uidList, 2*time.Minute, 2*time.Second)
+			existingSet := lo.SliceToMap(existingUIDs, func(uid string) (string, bool) { return uid, true })
+
+			chunkWithOuGroups := lo.Map(chunk, func(ou MetadataOu, _ int) MetadataOu {
+				err, o := GetOrgUnitByUID(ou.UID)
+				if err != nil {
+					return ou
+				}
+				groupsMap := lo.Map(o.GetGroups(), func(g OrgUnitGroup, _ int) dbutils.Map {
+					m := dbutils.Map{}
+					m.Set("id", g.UID)
+					return m
+				})
+				ou.OrganisationUnitGroups = groupsMap
+				return ou
+			})
+
+			allGroups := lo.FlatMap(chunkWithOuGroups, func(meta MetadataOu, _ int) []map[string]any {
+				if len(meta.OrganisationUnitGroups) == 0 {
+					return nil
+				}
+				groups := lo.Map(meta.OrganisationUnitGroups, func(g dbutils.Map, _ int) string {
+					return g.Get("id", "").(string)
+				})
+				return []map[string]any{
+					{"organisationUnit": meta.UID, "groups": groups},
+				}
+			})
+
+			grouped := lo.Reduce(allGroups, func(acc map[string][]string, item map[string]any, _ int) map[string][]string {
+				orgUnit, _ := item["organisationUnit"].(string)
+				groups, _ := item["groups"].([]string)
+
+				// Only PATCH membership for OUs confirmed to exist in target
+				if _, ok := existingSet[orgUnit]; !ok {
+					return acc
+				}
+				for _, group := range groups {
+					acc[group] = append(acc[group], orgUnit)
+				}
+				return acc
+			}, make(map[string][]string))
+
+			ouGroupReqs := make(map[string][]MetadataObject)
+			for k, val := range grouped {
+				var groupAddSlice []MetadataObject
+				for _, uid := range val {
+					groupAddSlice = append(groupAddSlice, MetadataObject{
+						Operation: "add",
+						Path:      "/organisationUnits/-",
+						Value:     map[string]string{"id": uid},
+					})
+				}
+				ouGroupReqs[k] = groupAddSlice
+			}
+
+			for k, ops := range ouGroupReqs {
+				resp, err := client.PatchResource(fmt.Sprintf("organisationUnitGroups/%s", k), ops)
+				if err != nil {
+					log.WithError(err).WithField("Server", groupsServer.URL()).Info("Failed to add group to org units")
+				} else {
+					log.WithFields(log.Fields{"Server": groupsServer.URL(), "Response": string(resp.Body())}).Info("Group Add Import")
+				}
+			}
+		}
 	}
+}
+
+func waitForOrganisationUnits(server Server, baseAPI string, ouUIDs []string, timeout time.Duration, interval time.Duration) []string {
+	deadline := time.Now().Add(timeout)
+	ouUIDs = lo.Uniq(ouUIDs)
+
+	for {
+		var existing []string
+		for _, uid := range ouUIDs {
+			if uid == "" {
+				continue
+			}
+			if organisationUnitExists(server, baseAPI, uid) {
+				existing = append(existing, uid)
+			}
+		}
+		if len(existing) > 0 || time.Now().After(deadline) {
+			return existing
+		}
+		time.Sleep(interval)
+	}
+}
+
+func organisationUnitExists(server Server, baseAPI string, uid string) bool {
+	checkURL := fmt.Sprintf("%s/api/organisationUnits/%s.json?fields=id", baseAPI, uid)
+
+	var resp []byte
+	var err error
+	switch server.AuthMethod() {
+	case "Basic":
+		resp, err = utils.GetWithBasicAuth(checkURL, server.Username(), server.Password())
+	case "Token":
+		resp, err = utils.GetWithToken(checkURL, server.AuthToken())
+	default:
+		return false
+	}
+	if err != nil || resp == nil {
+		return false
+	}
+
+	id, _, _, err := jsonparser.Get(resp, "id")
+	return err == nil && len(id) > 0
 }
 
 func SyncAttributesToServer(serverName string) {

@@ -3,12 +3,13 @@ package config
 import (
 	goflag "flag"
 	"fmt"
-	"github.com/lib/pq"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 
 	"github.com/fsnotify/fsnotify"
 	log "github.com/sirupsen/logrus"
@@ -17,13 +18,18 @@ import (
 )
 
 // MFLIntegratorConf is the global conf
-var MFLIntegratorConf Config
-var ForceSync *bool
-var SkipOUSync *bool
-var DisableHTTPServer *bool
-var SkipRequestProcessing *bool // used to ignore the attempt to send request. Don't produce or consume requests
-var MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
-var ShowVersion *bool
+var (
+	MFLIntegratorConf        Config
+	ForceSync                *bool
+	SkipOUSync               *bool
+	MFLSyncOFF               *bool
+	MFLSyncScheduleOFF       *bool
+	DisableHTTPServer        *bool
+	SkipRequestProcessing    *bool // used to ignore the attempt to send request. Don't produce or consume requests
+	SkipAdminUnitsMatching   *bool
+	MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
+	ShowVersion              *bool
+)
 
 const VERSION = "1.0.3"
 
@@ -54,6 +60,9 @@ func init() {
 	SkipOUSync = flag.Bool("skip-ousync", false, "Whether to skip ou and facility sync. But process requests")
 	DisableHTTPServer = flag.Bool("disable-http-server", false, "Whether to disable HTTP Server")
 	SkipRequestProcessing = flag.Bool("skip-request-processing", false, "Whether to skip requests processing")
+	SkipAdminUnitsMatching = flag.Bool("skip-admin-units-matching", false, "Whether to skip admin units matching")
+	MFLSyncOFF = flag.Bool("mfl-sync-off", false, "Whether to skip MFL sync, i.e ignore Fetch Facilities from MFL")
+	MFLSyncScheduleOFF = flag.Bool("sync-schedule-off", false, "Whether to skip MFL sync schedule")
 	ShowVersion = flag.Bool("version", false, "Display version of MFL Integrator")
 	// FakeSyncToBaseDHIS2 = flag.Bool("fake-sync-to-base-dhis2", false, "Whether to fake sync to base DHIS2")
 
@@ -64,9 +73,27 @@ func init() {
 		os.Exit(1)
 	}
 
+	viper.SetDefault("server.host", "localhost")
+	viper.SetDefault("server.port", "9090")
+	viper.SetDefault("server.skip_request_processing", false)
+	viper.SetDefault("server.skip_admin_units_matching", false)
+	viper.SetDefault("server.skip_ou_sync", false)
+	viper.SetDefault("server.disable_http_server", false)
+	viper.SetDefault("server.fake_sync_to_base_dhis2", true)
+	viper.SetDefault("server.sync_schedule_off", false)
+	viper.SetDefault("server.sync_on", false)
+	viper.SetDefault("server.sync_to_dhis2_instances", false)
+	viper.SetDefault("server.dhis2_top_level_tree_ids", "akV6429SUqu")
+
 	viper.SetConfigName("mfld")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(configDir)
+	viper.SetEnvPrefix("MFLINTEGRATOR")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	// Flags override everything else
+	_ = viper.BindPFlags(flag.CommandLine)
 
 	if len(*configFile) > 0 {
 		viper.SetConfigFile(*configFile)
@@ -160,12 +187,15 @@ type Config struct {
 		EndOfSubmissionPeriod   string `mapstructure:"end_submission_period" env:"MFLINTEGRATOR_END_SUBMISSION_PERIOD" env-default:"24"`
 		MaxConcurrent           int    `mapstructure:"max_concurrent" env:"MFLINTEGRATOR_MAX_CONCURRENT" env-default:"5"`
 		SkipRequestProcessing   bool   `mapstructure:"skip_request_processing" env:"MFLINTEGRATOR_SKIP_REQUEST_PROCESSING" env-default:"false"`
+		SkipAdminUnitsMatching  bool   `mapstructure:"skip_admin_units_matching" env:"MFLINTEGRATOR_SKIP_ADMIN_UNITS_MATCHING" env-default:"true"`
+		SkipOUSync              bool   `mapstructure:"skip_ou_sync" env:"MFLINTEGRATOR_SKIP_OU_SYNC" env-default:"false"`
+		SyncScheduleOFF         bool   `mapstructure:"sync_schedule_off" env:"MFLINTEGRATOR_SYNC_SCHEDULE_OFF" env-default:"false"`
 		ForceSync               bool   `mapstructure:"force_sync" env:"MFLINTEGRATOR_FORCE_SYNC" env-default:"false"` // Assume OU hierarchy already there
 		SyncOn                  bool   `mapstructure:"sync_on" env:"MFLINTEGRATOR_SYNC_ON" env-default:"true"`
 		FakeSyncToBaseDHIS2     bool   `mapstructure:"fake_sync_to_base_dhis2" env:"MFLINTEGRATOR_FAKE_SYNC_TO_BASE_DHIS2" env-default:"false"`
+		SyncToDHIS2Instances    bool   `mapstructure:"sync_to_dhis2_instances" env:"MFLINTEGRATOR_SYNC_TO_DHIS2_INSTANCES" env-default:"false"`
 		RequestProcessInterval  int    `mapstructure:"request_process_interval" env:"MFLINTEGRATOR_REQUEST_PROCESS_INTERVAL" env-default:"4"`
-		LogDirectory            string `mapstructure:"logdir" env:"MFLINTEGRATOR_LOGDIR" env-default:"/var/log/mflintegrator"`
-		MigrationsDirectory     string `mapstructure:"migrations_dir" env:"MFLINTEGRATOR_MIGRATTIONS_DIR" env-default:"file:///usr/share/mflintegrator/db/migrations"`
+		LogDirectory            string `mapstructure:"log_dir" env:"MFLINTEGRATOR_LOG_DIRECTORY" env-default:"/var/log/mflintegrator"`
 		UseSSL                  string `mapstructure:"use_ssl" env:"MFLINTEGRATOR_USE_SSL" env-default:"true"`
 		SSLClientCertKeyFile    string `mapstructure:"ssl_client_certkey_file" env:"SSL_CLIENT_CERTKEY_FILE" env-default:""`
 		SSLServerCertKeyFile    string `mapstructure:"ssl_server_certkey_file" env:"SSL_SERVER_CERTKEY_FILE" env-default:""`
@@ -173,28 +203,28 @@ type Config struct {
 	} `yaml:"server"`
 
 	API struct {
-		MFLBaseURL                  string `mapstructure:"mfl_base_url" env:"MFLINTEGRATOR_BASE_URL" env-description:"The MFL base API URL"`
-		MFLUser                     string `mapstructure:"mfl_user"  env:"MFLINTEGRATOR_USER" env-description:"The MFL API username"`
-		MFLPassword                 string `mapstructure:"mfl_password"  env:"MFLINTEGRATOR_PASSWORD" env-description:"The MFL API user password"`
-		MFLDHIS2BaseURL             string `mapstructure:"mfl_dhis2_base_url" env:"MFLINTEGRATOR_DHIS2_BASE_URL" env-description:"The MFL base DHIS2 instance base API URL"`
-		MFLDHIS2User                string `mapstructure:"mfl_dhis2_user"  env:"MFLINTEGRATOR_DHIS2_USER" env-description:"The MFL base DHIS2 username"`
-		MFLDHIS2Password            string `mapstructure:"mfl_dhis2_password"  env:"MFLINTEGRATOR_DHIS2_PASSWORD" env-description:"The MFL base DHIS2  user password"`
-		MFLDHIS2PAT                 string `mapstructure:"mfl_dhis2_pat"  env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The MFL base DHIS2  Personal Access Token"`
-		MFLDHIS2TreeIDs             string `mapstructure:"mfl_dhis2_tree_ids"  env:"MFLINTEGRATOR_DHIS2_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level ids"`
-		MFLDHIS2FacilityLevel       int    `mapstructure:"mfl_dhis2_facility_level"  env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The MFL base DHIS2  Orgunit Level for health facilities" env-default:"5"`
-		MFLDHIS2DistrictLevelName   string `mapstructure:"mfl_dhis2_district_oulevel_name"  env:"MFLINTEGRATOR_DHIS2_DISTRICT_OULEVEL_NAME" env-description:"The MFL base DHIS2 OU Level name for districts" env-default:"District/City"`
-		MFLDHIS2OUMFLIDAttributeID  string `mapstructure:"mfl_dhis2_ou_mflid_attribute_id" env:"MFLINTEGRATOR_DHIS2_OU_MFLID_ATTRIBUTE_ID" env-description:"The DHIS2 OU MFLID Attribute ID"`
-		MFLCCDHIS2Servers           string `mapstructure:"mfl_cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
-		MFLCCDHIS2HierarchyServers  string `mapstructure:"mfl_cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
-		MFLCCDHIS2CreateServers     string `mapstructure:"mfl_cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`
-		MFLCCDHIS2UpdateServers     string `mapstructure:"mfl_cc_dhis2_update_servers"  env:"MFLINTEGRATOR_CC_DHIS2_UPDATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU updates"`
-		MFLCCDHIS2OuGroupAddServers string `mapstructure:"mfl_cc_dhis2_ougroup_add_servers"  env:"MFLINTEGRATOR_CC_DHIS2_OUGROUP_ADD_SERVERS" env-description:"The MFL CC DHIS2 instances APIs used to add ous to groups"`
-		MFLMetadataBatchSize        int    `mapstructure:"mfl_metadata_batch_size"  env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata items to chunk in a metadata request" env-default:"50"`
-		MFLSyncCronExpression       string `mapstructure:"mfl_sync_cron_expression"  env:"MFLINTEGRATOR_SYNC_CRON_EXPRESSION" env-description:"The MFL Health Facility Syncronisation Cron Expression" env-default:"0 0-23/6 * * *"`
-		MFLRetryCronExpression      string `mapstructure:"mfl_retry_cron_expression"  env:"MFLINTEGRATOR_RETRY_CRON_EXPRESSION" env-description:"The MFL request retry Cron Expression" env-default:"*/5 * * * *"`
-		Email                       string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
-		AuthToken                   string `mapstructure:"authtoken" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
-		SmsURL                      string `mapstructure:"smsurl" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`
+		MFLBaseURL               string `mapstructure:"mfl_base_url" env:"MFLINTEGRATOR_BASE_URL" env-description:"The MFL base API URL"`
+		MFLUser                  string `mapstructure:"mfl_user"  env:"MFLINTEGRATOR_USER" env-description:"The MFL API username"`
+		MFLPassword              string `mapstructure:"mfl_password"  env:"MFLINTEGRATOR_PASSWORD" env-description:"The MFL API user password"`
+		DHIS2BaseURL             string `mapstructure:"dhis2_base_url" env:"MFLINTEGRATOR_DHIS2_BASE_URL" env-description:"The base DHIS2 instance base API URL"`
+		DHIS2User                string `mapstructure:"dhis2_user" env:"MFLINTEGRATOR_DHIS2_USER" env-description:"The base DHIS2 username"`
+		DHIS2Password            string `mapstructure:"dhis2_password" env:"MFLINTEGRATOR_DHIS2_PASSWORD" env-description:"The MFL base DHIS2  user password"`
+		DHIS2PAT                 string `mapstructure:"dhis2_pat" env:"MFLINTEGRATOR_DHIS2_PAT" env-description:"The base DHIS2  Personal Access Token"`
+		DHIS2TopLevelTreeIDs     string `mapstructure:"dhis2_top_level_tree_ids" env:"MFLINTEGRATOR_DHIS2_TOP_LEVEL_TREE_IDS" env-description:"The MFL base DHIS2  orgunits top level tree ids"`
+		DHIS2FacilityLevel       int    `mapstructure:"dhis2_facility_level" env:"MFLINTEGRATOR_DHIS2_FACILITY_LEVEL" env-description:"The base DHIS2  Orgunit Level for health facilities" env-default:"5"`
+		DHIS2DistrictLevelName   string `mapstructure:"dhis2_district_oulevel_name"  env:"MFLINTEGRATOR_DHIS2_DISTRICT_OULEVEL_NAME" env-description:"The MFL base DHIS2 OU Level name for districts" env-default:"District/City"`
+		DHIS2OUMFLIDAttributeID  string `mapstructure:"dhis2_ou_mflid_attribute_id" env:"MFLINTEGRATOR_DHIS2_OU_MFLID_ATTRIBUTE_ID" env-description:"The DHIS2 OU MFLID Attribute ID"`
+		CCDHIS2Servers           string `mapstructure:"cc_dhis2_servers"  env:"MFLINTEGRATOR_CC_DHIS2_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of facilities"`
+		CCDHIS2HierarchyServers  string `mapstructure:"cc_dhis2_hierarchy_servers"  env:"MFLINTEGRATOR_CC_DHIS2_HIERARCHY_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU hierarchy"`
+		CCDHIS2CreateServers     string `mapstructure:"cc_dhis2_create_servers"  env:"MFLINTEGRATOR_CC_DHIS2_CREATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU creations"`
+		CCDHIS2UpdateServers     string `mapstructure:"cc_dhis2_update_servers"  env:"MFLINTEGRATOR_CC_DHIS2_UPDATE_SERVERS" env-description:"The MFL CC DHIS2 instances to receive copy of OU updates"`
+		CCDHIS2OuGroupAddServers string `mapstructure:"cc_dhis2_ougroup_add_servers"  env:"MFLINTEGRATOR_CC_DHIS2_OUGROUP_ADD_SERVERS" env-description:"The MFL CC DHIS2 instances APIs used to add ous to groups"`
+		MetadataBatchSize        int    `mapstructure:"metadata_batch_size" env:"MFLINTEGRATOR_METADATA_BATCH_SIZE" env-description:"The MFL Metadata items to chunk in a metadata request" env-default:"50"`
+		SyncCronExpression       string `mapstructure:"sync_cron_expression"  env:"MFLINTEGRATOR_SYNC_CRON_EXPRESSION" env-description:"The MFL Health Facility Syncronisation Cron Expression" env-default:"0 0-23/6 * * *"`
+		RetryCronExpression      string `mapstructure:"retry_cron_expression"  env:"MFLINTEGRATOR_RETRY_CRON_EXPRESSION" env-description:"The MFL request retry Cron Expression" env-default:"*/5 * * * *"`
+		Email                    string `mapstructure:"email" env:"MFLINTEGRATOR_EMAIL" env-description:"API user email address"`
+		AuthToken                string `mapstructure:"auth_token" env:"RAPIDPRO_AUTH_TOKEN" env-description:"API JWT authorization token"`
+		SmsURL                   string `mapstructure:"sms_url" env:"MFLINTEGRATOR_SMS_URL" env-description:"API SMS endpoint"`
 	} `yaml:"api"`
 }
 

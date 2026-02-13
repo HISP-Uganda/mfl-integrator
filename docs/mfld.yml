@@ -14,6 +14,9 @@ server:
   start_submission_period: 0
   end_submission_period: 23
   skip_request_processing: false
+  skip_admin_units_matching: false
+  sync_to_dhis2_instances: true
+  skip_ou_sync: false
   sync_on: true
   fake_sync_to_base_dhis2: false
   request_process_interval: 4
@@ -24,20 +27,20 @@ api:
   mfl_base_url: ""
   mfl_user: ""
   mfl_password: ""
-  mfl_dhis2_base_url: ""
-  mfl_dhis2_user: "admin"
-  mfl_dhis2_password: "district"
-  mfl_dhis2_pat: ""
-  mfl_cc_dhis2_hierarchy_servers: "test240_OU,test237_OU"
-  mfl_cc_dhis2_servers: "test237_OU,test240_OU"
-  mfl_cc_dhis2_create_servers: "test240_OU,test237_OU"
-  mfl_cc_dhis2_update_servers: "test240_OU_Update,test237_OU_Update"
-  mfl_cc_dhis2_ougroup_add_servers: "test240_OU_GroupAdd,test237_OU_GroupAdd"
-  mfl_dhis2_tree_ids: "akV6429SUqu"
-  mfl_metadata_batch_size: 50
-  mfl_dhis2_facility_level: 5
-  mfl_sync_cron_expression: "0 0-23/6 * * *"
-  mfl_retry_cron_expression: "0 * * * *"
-  mfl_dhis2_ou_mflid_attribute_id: "Hb4BF0KTbZ1"
-  authtoken: ABC
-  smsurl: ""
+  dhis2_base_url: ""
+  dhis2_user: "admin"
+  dhis2_password: "district"
+  dhis2_pat: ""
+  cc_dhis2_hierarchy_servers: "test240_OU,test237_OU"
+  cc_dhis2_servers: "test237_OU,test240_OU"
+  cc_dhis2_create_servers: "test240_OU,test237_OU"
+  cc_dhis2_update_servers: "test240_OU_Update,test237_OU_Update"
+  cc_dhis2_ougroup_add_servers: "test240_OU_GroupAdd,test237_OU_GroupAdd"
+  dhis2_top_level_tree_ids: "akV6429SUqu"
+  metadata_batch_size: 50
+  dhis2_facility_level: 5
+  sync_cron_expression: "0 0-23/6 * * *"
+  retry_cron_expression: "0 * * * *"
+  dhis2_ou_mflid_attribute_id: "Hb4BF0KTbZ1"
+  auth_token: ABC
+  sms_url: ""

@@ -1,18 +1,26 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/HISP-Uganda/mfl-integrator/clients"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/controllers"
+	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/gin-gonic/gin"
 	"github.com/go-co-op/gocron"
 	"github.com/jmoiron/sqlx"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
 	log "github.com/sirupsen/logrus"
-	"os"
-	"sync"
-	"time"
 )
 
 func init() {
@@ -45,24 +53,48 @@ var splash = `
 
 func main() {
 	fmt.Printf(splash)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	dbConn, err := sqlx.Connect("postgres", config.MFLIntegratorConf.Database.URI)
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatalf("Failed to connect to database: %v\n", err)
 	}
+
+	defer func() {
+		if err := dbConn.Close(); err != nil {
+			log.WithError(err).Warn("Failed to close DB connection pool")
+		}
+	}()
+
 	// log.WithField("DHIS2_SERVER_CONFIGS", config.MFLDHIS2ServersConfigMap).Info("SERVER: =======>")
+	err = db.RunMigrations()
+	if err != nil {
+		log.Fatalf("Failed to run database migrations %v\n", err)
+	}
 	LoadServersFromConfigFiles(config.MFLDHIS2ServersConfigMap)
 	// log.WithFields(log.Fields{"Servers": models.ServerMapByName["localhost"]}).Info("SERVERS==>>")
 	// os.Exit(1)
+
+	models.ReloadServersFromDB()
+
+	mflClient := clients.NewMFLApi(
+		config.MFLIntegratorConf.API.MFLBaseURL,
+		clients.WithBasicAuth(
+			config.MFLIntegratorConf.API.MFLUser,
+			config.MFLIntegratorConf.API.MFLPassword,
+		),
+	)
 
 	go func() {
 		// Create a new scheduler
 		s := gocron.NewScheduler(time.UTC)
 		// Schedule the task to run "30 minutes after midn, 4am, 8am, 12pm..., everyday"
-		// if --skip-ousync flag is on we ignore
-		if !*config.SkipOUSync {
-			log.WithFields(log.Fields{"SyncCronExpression": config.MFLIntegratorConf.API.MFLSyncCronExpression}).Info(
+		// if the --mfl-sync-schedule-off flag is present, we ignore
+		if !*config.MFLSyncScheduleOFF {
+			log.WithFields(log.Fields{"SyncCronExpression": config.MFLIntegratorConf.API.SyncCronExpression}).Info(
 				"Facility Synchronisation Cron Expression")
-			_, err := s.Cron(config.MFLIntegratorConf.API.MFLSyncCronExpression).Do(FetchFacilitiesByDistrict)
+			_, err := s.Cron(config.MFLIntegratorConf.API.SyncCronExpression).Do(FetchFacilitiesByDistrict)
 			// _, err := s.CronWithSeconds("* * * * * *").Do(task)
 			if err != nil {
 				log.WithError(err).Error("Error scheduling facility sync task:")
@@ -71,10 +103,10 @@ func main() {
 		}
 
 		// retrying incomplete requests runs every 5 minutes
-		log.WithFields(log.Fields{"RetryCronExpression": config.MFLIntegratorConf.API.MFLRetryCronExpression}).Info(
+		log.WithFields(log.Fields{"RetryCronExpression": config.MFLIntegratorConf.API.RetryCronExpression}).Info(
 			"Request Retry Cron Expression")
 		if !*config.SkipRequestProcessing {
-			_, err = s.Cron(config.MFLIntegratorConf.API.MFLRetryCronExpression).Do(RetryIncompleteRequests)
+			_, err = s.Cron(config.MFLIntegratorConf.API.RetryCronExpression).Do(RetryIncompleteRequests)
 			if err != nil {
 				log.WithError(err).Error("Error scheduling incomplete request retry task:")
 			}
@@ -84,15 +116,40 @@ func main() {
 
 	go func() {
 		if !*config.SkipOUSync {
+			log.Info("Starting OrgUnits sync from base DHIS2")
 			LoadOuLevels()
 			LoadOuGroups()
 			LoadAttributes()
 			LoadLocations() // Load organisation units - before facility in base DHIS2 instance
-			MatchLocationsWithMFL()
-			SyncLocationsToDHIS2Instances()
-			// fetch facilities after initial run, just use a scheduled job.
-			FetchFacilitiesByDistrict()
+			if config.MFLIntegratorConf.Server.SyncToDHIS2Instances {
+				SyncLocationsToDHIS2Instances()
+			} else {
+				log.Info("Skipping OrgUnits sync to DHIS2 instances: --skip-dhis2-sync flag added")
+			}
+		} else {
+			log.Warn("Skipping OrgUnits sync from base DHIS2: --skip-ou-sync flag added")
 		}
+		if !*config.SkipAdminUnitsMatching {
+			log.Info("Performing admin unit matching!!!")
+			MatchLocationsWithMFL2(ctx, mflClient)
+			log.Info("Admin unit matching completed!!!")
+		} else {
+			log.Warn("Skipping admin unit matching! --skip-admin-units-matching flag added")
+		}
+
+		// fetch facilities after initial run, just use a scheduled job.
+		if !*config.MFLSyncOFF {
+			log.Info("Fetching facilities from MFL started...")
+			FetchFacilitiesByDistrict()
+			log.Info("Fetching facilities from MFL finished...")
+		} else {
+			// log fetching facilities from MFL disabled
+			log.Warn(".::::..Fetching facilities from MFL disabled..::::..")
+		}
+
+		//if config.MFLIntegratorConf.Server.SyncToDHIS2Instances {
+		//	SyncLocationsToDHIS2Instances()
+		//}
 
 	}()
 
@@ -103,28 +160,42 @@ func main() {
 	mutex := &sync.Mutex{}
 	rWMutex := &sync.RWMutex{}
 
+	// Add this: capture server errors and convert them into a graceful shutdown.
+	serverErrCh := make(chan error, 1)
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-serverErrCh:
+			if err != nil {
+				log.WithError(err).Error("API server error; initiating shutdown")
+				stop() // cancels ctx => producer/consumers/server all start shutting down
+			}
+		}
+	}()
+
 	if !*config.SkipRequestProcessing {
 		// don't produce anything if skip processing is enabled
 
 		// Start the producer goroutine
 		wg.Add(1)
-		go Produce(dbConn, jobs, &wg, mutex, seenMap)
+		go Produce(ctx, dbConn, jobs, &wg, mutex, seenMap)
 
 		// Start the consumer goroutine
 		wg.Add(1)
-		go StartConsumers(jobs, &wg, rWMutex, seenMap)
+		go StartConsumers(ctx, jobs, &wg, rWMutex, seenMap)
 	}
 
 	// Start the backend API gin server
 	if !*config.DisableHTTPServer {
 		wg.Add(1)
-		go startAPIServer(&wg)
+		go startAPIServer(ctx, &wg, serverErrCh)
 	}
 
 	wg.Wait()
 }
 
-func startAPIServer(wg *sync.WaitGroup) {
+func startAPIServer(ctx context.Context, wg *sync.WaitGroup, serverErrCh chan<- error) {
 	defer wg.Done()
 	router := gin.Default()
 	v2 := router.Group("/api", BasicAuth())
@@ -164,5 +235,39 @@ func startAPIServer(wg *sync.WaitGroup) {
 		c.String(404, "Page Not Found!")
 	})
 
-	_ = router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
+	httpServer := &http.Server{
+		Addr:    ":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port),
+		Handler: router,
+	}
+
+	// Start the server in a goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		log.Infof("Starting API server on :%s...", config.MFLIntegratorConf.Server.Port)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Info("Shutdown signal received. Shutting down MFL-Integrator server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Errorf("Error shutting down API server: %v", err)
+		} else {
+			log.Info("API server shut down gracefully.")
+		}
+	case err := <-errCh:
+		// Was log.Fatalf(...) before; now: report and return so shutdown is graceful.
+		select {
+		case serverErrCh <- err:
+		default:
+			// don't block if nobody is listening
+		}
+		return
+	}
+
+	// _ = router.Run(":" + fmt.Sprintf("%s", config.MFLIntegratorConf.Server.Port))
 }

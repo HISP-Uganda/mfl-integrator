@@ -160,6 +160,14 @@ func (m *Map) Map() map[string]interface{} {
 	return m.m
 }
 
+// Set sets the string value with the passed in key
+func (m *Map) Set(key string, value interface{}) {
+	if m.m == nil {
+		m.m = make(map[string]interface{})
+	}
+	m.m[key] = value
+}
+
 // GetString returns the string value with the passed in key, or def if not found or of wrong type
 func (m *Map) GetString(key string, def string) string {
 	if m.m == nil {

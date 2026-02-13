@@ -2,13 +2,15 @@ package models
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
+	_ "github.com/lib/pq"
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 type MetadataOu struct {
@@ -23,7 +25,7 @@ type MetadataOu struct {
 	Email                  string        `db:"email" json:"email,omitempty"`
 	Address                string        `db:"address" json:"address,omitempty"`
 	Phone                  string        `db:"phonenumber" json:"phone,omitempty"`
-	Code                   string        `db:"code" json:"code,omitempty"`
+	Code                   *string       `db:"code" json:"code,omitempty"`
 	OpeningDate            string        `db:"openingdate" json:"openingDate"`
 	Parent                 dbutils.Map   `db:"parent" json:"parent,omitempty"`
 	Geometry               dbutils.Map   `db:"geometry" json:"geometry,omitempty"`
@@ -152,7 +154,7 @@ func GenerateOuMetadataByLevel(level int) []MetadataOu {
 	dbConn := db.GetDB()
 	ouSQL := selectMetaDatOusSQL
 	if level == 1 {
-		topLevelUIDs := strings.Split(config.MFLIntegratorConf.API.MFLDHIS2TreeIDs, ",")
+		topLevelUIDs := strings.Split(config.MFLIntegratorConf.API.DHIS2TopLevelTreeIDs, ",")
 		if len(topLevelUIDs) > 0 {
 			for i, uid := range topLevelUIDs {
 				topLevelUIDs[i] = fmt.Sprintf("'%s'", uid)

@@ -1,10 +1,11 @@
 package models
 
 import (
+	"time"
+
 	db2 "github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	log "github.com/sirupsen/logrus"
-	"time"
 )
 
 type SyncLog struct {
@@ -39,7 +40,7 @@ func (s *SyncLog) LogSync() {
 func GetLastSyncDate(mflId string) string {
 	var date string
 	err := db2.GetDB().Get(&date,
-		"SELECT date(stopped) FROM sync_log  WHERE mflid = $1 ORDER BY created DESC LIMIT 1", mflId)
+		"SELECT to_char(date(stopped), 'YYYY-MM-DD') FROM sync_log  WHERE mflid = $1 ORDER BY created DESC LIMIT 1", mflId)
 	if err != nil {
 		return ""
 	}

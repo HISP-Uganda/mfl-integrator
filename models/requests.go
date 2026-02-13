@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	db2 "github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
@@ -12,9 +16,6 @@ import (
 	"github.com/lib/pq"
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
-	"reflect"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
@@ -152,7 +153,7 @@ func NewRequest(c *gin.Context, db *sqlx.DB) (Request, error) {
 	r.ObjectType = c.Query("objectType")
 	r.Errors = c.Query("extras")
 	r.District = c.Query("district")
-	ccList := c.DefaultQuery("cc", config.MFLIntegratorConf.API.MFLCCDHIS2Servers)
+	ccList := c.DefaultQuery("cc", config.MFLIntegratorConf.API.CCDHIS2Servers)
 	serverIDs := lo.Map(strings.Split(ccList, ","), func(name string, _ int) int64 { // lodash stuff
 		return GetServerIDByName(name)
 	})

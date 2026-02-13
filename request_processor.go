@@ -2,11 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
@@ -16,11 +23,6 @@ import (
 	"github.com/lib/pq"
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"net/http"
-	"strings"
-	"sync"
-	"time"
 )
 
 // ServerStatus is the status object within each request to
@@ -395,71 +397,160 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 
 // var RequestsMap = make(map[string]int)
 
+//// Produce gets all the ready requests in the queue
+//func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex, seenMap map[models.RequestID]bool) {
+//	defer wg.Done()
+//	log.Println("Producer staring:!!!")
+//
+//	// RequestsMap[""] = 6
+//	for {
+//
+//		// log.Println("Going to read requests")
+//		rows, err := db.Queryx(`
+//                SELECT
+//                    id FROM requests
+//                WHERE status = $1  and status_of_dependence(id) IN ('completed', '')
+//                ORDER BY depends_on desc, created LIMIT 100000
+//                `, "ready")
+//		if err != nil {
+//			log.WithError(err).Error("ERROR READING READY REQUESTS!!!")
+//		}
+//		requestsCount := 0
+//		for rows.Next() {
+//
+//			requestsCount += 1
+//			var requestID int
+//			err := rows.Scan(&requestID)
+//			if err != nil {
+//				// log.Fatalln("==>", err)
+//				log.WithError(err).Error("Error reading request from queue:")
+//			}
+//			mutex.Lock()
+//			if _, exists := seenMap[models.RequestID(requestID)]; exists {
+//				log.WithField("requestID", requestID).Info("Request already in dynamic queue")
+//				continue
+//			}
+//			mutex.Unlock()
+//			go func(req int) {
+//				// Let see if we can recover from panics XXX
+//				defer func() {
+//					if r := recover(); r != nil {
+//						fmt.Println("Recovered in Produce", r)
+//
+//					}
+//				}()
+//				mutex.Lock()
+//				defer mutex.Unlock()
+//				//if _, exists := seenMap[models.RequestID(req)]; exists {
+//				//	log.WithField("requestID", req).Info("Request already in dynamic queue")
+//				//	return
+//				//}
+//				jobs <- req
+//				seenMap[models.RequestID(req)] = true
+//				log.Info(fmt.Sprintf("Added Request [id: %v]", req))
+//			}(requestID)
+//
+//		}
+//		if err := rows.Err(); err != nil {
+//			log.WithError(err).Error("Error reading requests")
+//		}
+//		_ = rows.Close()
+//		if requestsCount > 0 {
+//			log.WithField("requestsAdded", requestsCount).Info("Fetched Requests")
+//			log.Info(fmt.Sprintf("Going to sleep for: %v", config.MFLIntegratorConf.Server.RequestProcessInterval))
+//		}
+//		// Not good enough but let's bare with the sleep this initial version
+//		time.Sleep(
+//			time.Duration(config.MFLIntegratorConf.Server.RequestProcessInterval) * time.Second)
+//	}
+//}
+
 // Produce gets all the ready requests in the queue
-func Produce(db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex, seenMap map[models.RequestID]bool) {
+func Produce(ctx context.Context, db *sqlx.DB, jobs chan<- int, wg *sync.WaitGroup, mutex *sync.Mutex, seenMap map[models.RequestID]bool) {
 	defer wg.Done()
+	defer close(jobs) // signal downstream that no more jobs will be produced
+
 	log.Println("Producer staring:!!!")
 
-	// RequestsMap[""] = 6
 	for {
+		// Stop promptly on cancellation.
+		select {
+		case <-ctx.Done():
+			log.WithError(ctx.Err()).Info("Producer stopping due to context cancellation")
+			return
+		default:
+		}
 
-		// log.Println("Going to read requests")
 		rows, err := db.Queryx(`
-                SELECT 
-                    id FROM requests 
-                WHERE status = $1  and status_of_dependence(id) IN ('completed', '') 
-                ORDER BY depends_on desc, created LIMIT 100000
-                `, "ready")
+                    SELECT 
+                        id FROM requests 
+                    WHERE status = $1  and status_of_dependence(id) IN ('completed', '') 
+                    ORDER BY depends_on desc, created LIMIT 100000
+                    `, "ready")
 		if err != nil {
 			log.WithError(err).Error("ERROR READING READY REQUESTS!!!")
 		}
+
 		requestsCount := 0
 		for rows.Next() {
+			// Allow cancellation while iterating rows.
+			select {
+			case <-ctx.Done():
+				_ = rows.Close()
+				log.WithError(ctx.Err()).Info("Producer stopping due to context cancellation")
+				return
+			default:
+			}
 
 			requestsCount += 1
 			var requestID int
 			err := rows.Scan(&requestID)
 			if err != nil {
-				// log.Fatalln("==>", err)
 				log.WithError(err).Error("Error reading request from queue:")
+				continue
 			}
+
 			mutex.Lock()
 			if _, exists := seenMap[models.RequestID(requestID)]; exists {
+				mutex.Unlock()
 				log.WithField("requestID", requestID).Info("Request already in dynamic queue")
 				continue
 			}
 			mutex.Unlock()
-			go func(req int) {
-				// Let see if we can recover from panics XXX
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Println("Recovered in Produce", r)
 
-					}
-				}()
+			// Send directly (no per-request goroutine) so we can cancel gracefully.
+			select {
+			case <-ctx.Done():
+				_ = rows.Close()
+				log.WithError(ctx.Err()).Info("Producer stopping due to context cancellation")
+				return
+			case jobs <- requestID:
 				mutex.Lock()
-				defer mutex.Unlock()
-				//if _, exists := seenMap[models.RequestID(req)]; exists {
-				//	log.WithField("requestID", req).Info("Request already in dynamic queue")
-				//	return
-				//}
-				jobs <- req
-				seenMap[models.RequestID(req)] = true
-				log.Info(fmt.Sprintf("Added Request [id: %v]", req))
-			}(requestID)
-
+				seenMap[models.RequestID(requestID)] = true
+				mutex.Unlock()
+				log.Info(fmt.Sprintf("Added Request [id: %v]", requestID))
+			}
 		}
+
 		if err := rows.Err(); err != nil {
 			log.WithError(err).Error("Error reading requests")
 		}
 		_ = rows.Close()
+
 		if requestsCount > 0 {
 			log.WithField("requestsAdded", requestsCount).Info("Fetched Requests")
 			log.Info(fmt.Sprintf("Going to sleep for: %v", config.MFLIntegratorConf.Server.RequestProcessInterval))
 		}
-		// Not good enough but let's bare with the sleep this initial version
-		time.Sleep(
-			time.Duration(config.MFLIntegratorConf.Server.RequestProcessInterval) * time.Second)
+
+		// Sleep, but wake early if ctx is canceled.
+		sleep := time.NewTimer(time.Duration(config.MFLIntegratorConf.Server.RequestProcessInterval) * time.Second)
+		select {
+		case <-ctx.Done():
+			sleep.Stop()
+			log.WithError(ctx.Err()).Info("Producer stopping due to context cancellation")
+			return
+		case <-sleep.C:
+		}
 	}
 }
 
@@ -682,23 +773,84 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 }
 
 // StartConsumers starts the consumer go routines
-func StartConsumers(jobs <-chan int, wg *sync.WaitGroup, mutex *sync.RWMutex, seedMap map[models.RequestID]bool) {
+func StartConsumers(ctx context.Context, jobs <-chan int, wg *sync.WaitGroup, mutex *sync.RWMutex, seedMap map[models.RequestID]bool) {
 	defer wg.Done()
 
 	dbURI := config.MFLIntegratorConf.Database.URI
 
 	fmt.Printf("Going to create %d Consumers!!!!!\n", config.MFLIntegratorConf.Server.MaxConcurrent)
-	for i := 1; i <= config.MFLIntegratorConf.Server.MaxConcurrent; i++ {
+	// Internal channel we can close to stop workers gracefully.
+	workerJobs := make(chan int)
 
+	// We wait for all Consume goroutines here, so StartConsumers doesn't return immediately.
+	var workersWG sync.WaitGroup
+
+	// Start the consumer workers.
+	for i := 1; i <= config.MFLIntegratorConf.Server.MaxConcurrent; i++ {
 		newConn, err := sqlx.Connect("postgres", dbURI)
 		if err != nil {
-			log.Fatalln("Request processor failed to connect to database: %v", err)
+			// Don't fatally exit the entire process from a worker manager goroutine.
+			log.WithError(err).Error("Request processor failed to connect to database")
+			// Stop any workers already started and return.
+			close(workerJobs)
+			workersWG.Wait()
+			return
 		}
+
 		fmt.Printf("Adding Consumer: %d\n", i)
+
+		workersWG.Add(1)
 		wg.Add(1)
-		go Consume(newConn, i, jobs, wg, mutex, seedMap)
+		go func(workerID int, conn *sqlx.DB) {
+			defer workersWG.Done()
+			defer func() {
+				if err := conn.Close(); err != nil {
+					log.WithError(err).WithField("worker", workerID).Warn("Failed to close consumer DB connection")
+				}
+			}()
+
+			// Consume exits when workerJobs is closed.
+			Consume(conn, workerID, workerJobs, wg, mutex, seedMap)
+		}(i, newConn)
 	}
 	log.WithFields(log.Fields{"MaxConsumers": config.MFLIntegratorConf.Server.MaxConcurrent}).Info("Created Consumers: ")
+
+	// Forward jobs to workerJobs until cancellation.
+	// When ctx is canceled, close workerJobs so workers exit their `for req := range jobs` loop.
+	forwardDone := make(chan struct{})
+	go func() {
+		defer close(forwardDone)
+		defer func() {
+			// Safe close: this goroutine is the only closer.
+			close(workerJobs)
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("Cancel signal received. Stopping consumers...")
+				return
+			case req, ok := <-jobs:
+				if !ok {
+					// Upstream channel closed -> stop workers too.
+					return
+				}
+				select {
+				case <-ctx.Done():
+					log.Info("Cancel signal received. Stopping consumers...")
+					return
+				case workerJobs <- req:
+				}
+			}
+		}
+	}()
+
+	// Wait until the forwarder has closed workerJobs, then wait for workers to finish.
+	<-forwardDone
+	workersWG.Wait()
+
+	log.Info("All consumers stopped gracefully")
+
 }
 
 const incompleteRequestsSQL = `
