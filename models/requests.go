@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -349,13 +350,11 @@ type RequestForm struct {
 	URLSuffix         string      `db:"url_suffix" json:"urlSuffix,omitempty"`
 }
 
-func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
+func buildRequestFromForm(rq *RequestForm) (Request, error) {
 	req := &Request{}
 	r := &req.r
 
 	r.DependsOn = rq.DependsOn
-	// r.Source = int(GetServerIDByName(rq.Source))
-	// r.Destination = int(GetServerIDByName(rq.Destination))
 	source := ServerMapByName[rq.Source]
 	r.Source = int(source.ID())
 	destination := ServerMapByName[rq.Destination]
@@ -396,10 +395,20 @@ func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
 	r.Errors = rq.Extras
 	r.District = rq.District
 	r.Body = rq.Body
+	return *req, nil
+}
+
+func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
+	req, err := buildRequestFromForm(rq)
+	if err != nil {
+		return req, err
+	}
+	r := &req.r
 
 	rows, err := db.NamedQuery(insertRequestSQL, r)
 	if err != nil {
 		log.WithError(err).Error("Error INSERTING Request")
+		return req, err
 	}
 
 	for rows.Next() {
@@ -408,7 +417,84 @@ func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
 		r.ID = RequestID(reqId.Int64)
 	}
 	_ = rows.Close()
-	return *req, nil
+	return req, nil
+}
+
+func SaveRequestFormsBatch(db *sqlx.DB, forms []RequestForm) error {
+	if len(forms) == 0 {
+		return nil
+	}
+
+	requests := make([]Request, 0, len(forms))
+	for i := range forms {
+		req, err := buildRequestFromForm(&forms[i])
+		if err != nil {
+			return err
+		}
+		requests = append(requests, req)
+	}
+
+	var (
+		valueStrings []string
+		valueArgs    []interface{}
+	)
+
+	for i := range requests {
+		r := requests[i].r
+		base := i*21 + 1
+		valueStrings = append(valueStrings, fmt.Sprintf(
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10,
+			base+11, base+12, base+13, base+14, base+15, base+16, base+17, base+18, base+19, base+20,
+		))
+		valueArgs = append(valueArgs,
+			r.Source,
+			r.Destination,
+			r.DependsOn,
+			r.UID,
+			r.BatchID,
+			r.ContentType,
+			r.Body,
+			r.BodyIsQueryParams,
+			r.Period,
+			r.Week,
+			r.Month,
+			parseRequestYear(r.Year),
+			r.RawMsg,
+			r.MSISDN,
+			r.Facility,
+			r.District,
+			r.ReportType,
+			r.ObjectType,
+			r.Errors,
+			r.URLSuffix,
+			pq.Array(r.CCServers),
+		)
+	}
+
+	query := fmt.Sprintf(`INSERT INTO requests
+		(source, destination, depends_on, uid, batchid, ctype, body, body_is_query_param, period, week, month, year,
+		 raw_msg, msisdn, facility, district, report_type, object_type, extras, url_suffix, cc_servers)
+		VALUES %s`, strings.Join(valueStrings, ","))
+
+	_, err := db.Exec(query, valueArgs...)
+	if err != nil {
+		log.WithError(err).Error("Error batch inserting requests")
+		return err
+	}
+	return nil
+}
+
+func parseRequestYear(year string) interface{} {
+	trimmed := strings.TrimSpace(year)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return nil
+	}
+	return parsed
 }
 
 func ClearBatchRequests(batch string) {

@@ -927,20 +927,22 @@ func FetchFacilities2(mflId, batchId string) {
 					dbutils.Int(fRequest.ID()),
 					facilityMetadata.UID,
 				)
+				batchRequestForms := make([]models.RequestForm, 0, len(requestForms))
 				for _, rForm := range requestForms {
 					if rForm.Source == "" {
 						continue
 					}
 					rForm.BatchID = batchId
-					_, err := rForm.Save(dbConn)
-					if err != nil {
-						log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
-							"Failed to queue request to add OU to OUGroup",
-						)
-						continue
-					}
-					log.WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Info(
-						"Queued Request to add facility to group!",
+					batchRequestForms = append(batchRequestForms, rForm)
+				}
+				err = models.SaveRequestFormsBatch(dbConn, batchRequestForms)
+				if err != nil {
+					log.WithError(err).WithField("OU", facilityMetadata.UID).Error(
+						"Failed to batch queue requests to add OU to groups",
+					)
+				} else if len(batchRequestForms) > 0 {
+					log.WithFields(log.Fields{"OU": facilityMetadata.UID, "Count": len(batchRequestForms)}).Info(
+						"Queued requests to add facility to groups",
 					)
 				}
 			} else {
@@ -1024,20 +1026,22 @@ func FetchFacilities2(mflId, batchId string) {
 			dbutils.Int(0),
 			facilityMetadata.UID,
 		)
+		batchRequestForms := make([]models.RequestForm, 0, len(requestForms))
 		for _, rForm := range requestForms {
 			if rForm.Source == "" {
 				continue
 			}
 			rForm.BatchID = batchId
-			_, err := rForm.Save(dbConn)
-			if err != nil {
-				log.WithError(err).WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Error(
-					"Updating OU: Failed to queue request to add OU to OUGroup",
-				)
-				continue
-			}
-			log.WithFields(log.Fields{"OU": rForm.UID, "Group": rForm.URLSuffix}).Info(
-				"Updating OU: Queued Request to add facility to group!",
+			batchRequestForms = append(batchRequestForms, rForm)
+		}
+		err = models.SaveRequestFormsBatch(dbConn, batchRequestForms)
+		if err != nil {
+			log.WithError(err).WithField("OU", facilityMetadata.UID).Error(
+				"Updating OU: Failed to batch queue requests to add OU to groups",
+			)
+		} else if len(batchRequestForms) > 0 {
+			log.WithFields(log.Fields{"OU": facilityMetadata.UID, "Count": len(batchRequestForms)}).Info(
+				"Updating OU: Queued requests to add facility to groups",
 			)
 		}
 
