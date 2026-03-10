@@ -471,6 +471,7 @@ func Produce(ctx context.Context, db *sqlx.DB, jobs chan<- int, wg *sync.WaitGro
 	defer close(jobs) // signal downstream that no more jobs will be produced
 
 	log.Println("Producer staring:!!!")
+	sleepInterval := time.Duration(config.MFLIntegratorConf.Server.RequestProcessInterval) * time.Second
 
 	for {
 		// Stop promptly on cancellation.
@@ -489,6 +490,15 @@ func Produce(ctx context.Context, db *sqlx.DB, jobs chan<- int, wg *sync.WaitGro
                     `, "ready")
 		if err != nil {
 			log.WithError(err).Error("ERROR READING READY REQUESTS!!!")
+			sleep := time.NewTimer(sleepInterval)
+			select {
+			case <-ctx.Done():
+				sleep.Stop()
+				log.WithError(ctx.Err()).Info("Producer stopping due to context cancellation")
+				return
+			case <-sleep.C:
+			}
+			continue
 		}
 
 		requestsCount := 0
@@ -543,7 +553,7 @@ func Produce(ctx context.Context, db *sqlx.DB, jobs chan<- int, wg *sync.WaitGro
 		}
 
 		// Sleep, but wake early if ctx is canceled.
-		sleep := time.NewTimer(time.Duration(config.MFLIntegratorConf.Server.RequestProcessInterval) * time.Second)
+		sleep := time.NewTimer(sleepInterval)
 		select {
 		case <-ctx.Done():
 			sleep.Stop()
