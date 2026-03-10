@@ -113,7 +113,9 @@ func main() {
 		log.WithFields(log.Fields{"RetryCronExpression": config.MFLIntegratorConf.API.RetryCronExpression}).Info(
 			"Request Retry Cron Expression")
 		if !*config.SkipRequestProcessing {
-			_, err = s.Cron(config.MFLIntegratorConf.API.RetryCronExpression).SingletonMode().Do(RetryIncompleteRequests)
+			_, err = s.Cron(config.MFLIntegratorConf.API.RetryCronExpression).SingletonMode().Do(func() {
+				RetryIncompleteRequests(ctx)
+			})
 			if err != nil {
 				log.WithError(err).Error("Error scheduling incomplete request retry task:")
 			}

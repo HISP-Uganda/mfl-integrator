@@ -377,7 +377,7 @@ func (r *RequestObj) unMarshalBody() (interface{}, error) {
 }
 
 // sendRequest sends request to destination server
-func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, error) {
+func (r *RequestObj) sendRequest(ctx context.Context, destination models.Server) (*http.Response, error) {
 	data, err := r.unMarshalBody()
 	if err != nil {
 		return nil, err
@@ -391,7 +391,7 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 	if len(r.URLSurffix) > 1 {
 		destURL += r.URLSurffix
 	}
-	req, err := http.NewRequestWithContext(context.Background(), destination.HTTPMethod(), destURL, bytes.NewReader(marshalled))
+	req, err := http.NewRequestWithContext(ctx, destination.HTTPMethod(), destURL, bytes.NewReader(marshalled))
 	if err != nil {
 		return nil, err
 	}
@@ -581,11 +581,18 @@ func Produce(ctx context.Context, db *sqlx.DB, jobs chan<- int, wg *sync.WaitGro
 }
 
 // Consume is the consumer go routine
-func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex *sync.RWMutex, seenMap map[models.RequestID]bool) {
+func Consume(ctx context.Context, db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex *sync.RWMutex, seenMap map[models.RequestID]bool) {
 	defer wg.Done()
 	fmt.Println("Calling Consumer")
 
 	for req := range jobs {
+		select {
+		case <-ctx.Done():
+			log.WithError(ctx.Err()).WithField("worker", worker).Info("Consumer stopping due to context cancellation")
+			return
+		default:
+		}
+
 		fmt.Printf("Message %v is consumed by worker %v.\n", req, worker)
 
 		reqObj := RequestObj{}
@@ -619,13 +626,13 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 				reqObj.StatusCode = "FAKED"
 				reqObj.updateRequest(tx)
 			} else {
-				_ = ProcessRequest(tx, reqObj, reqDestination, false, false)
+				_ = ProcessRequest(ctx, tx, reqObj, reqDestination, false, false)
 			}
 
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 					log.WithFields(log.Fields{"CCServerID": item, "ServerIndex=>": index}).Info("!CC Server:")
-					return ProcessRequest(tx, reqObj, ccServer, true, false)
+					return ProcessRequest(ctx, tx, reqObj, ccServer, true, false)
 				} else {
 					log.WithField("ServerID", item).Info("Sever not in Map")
 				}
@@ -636,7 +643,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				log.WithFields(log.Fields{"CCServerID": item, "ServerIndex==>": index}).Info("!!CC Server:")
 				if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
-					return ProcessRequest(tx, reqObj, ccServer, true, false)
+					return ProcessRequest(ctx, tx, reqObj, ccServer, true, false)
 				} else {
 					log.WithField("ServerID", item).Info("Sever not in Map>")
 
@@ -664,11 +671,11 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 }
 
 // ProcessRequest handles a ready request
-func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, serverInCC, skipCheck bool) error {
+func ProcessRequest(ctx context.Context, tx *sqlx.Tx, reqObj RequestObj, destination models.Server, serverInCC, skipCheck bool) error {
 	if skipCheck || reqObj.canSendRequest(tx, destination, serverInCC) {
 		log.WithFields(log.Fields{"requestID": reqObj.ID}).Info("Request can be processed")
 		// send request
-		resp, err := reqObj.sendRequest(destination)
+		resp, err := reqObj.sendRequest(ctx, destination)
 		if err != nil {
 			log.WithError(err).WithField("RequestID", reqObj.ID).Error(
 				"Failed to send request")
@@ -814,7 +821,7 @@ func StartConsumers(ctx context.Context, jobs <-chan int, wg *sync.WaitGroup, mu
 			defer workersWG.Done()
 
 			// Consume exits when workerJobs is closed.
-			Consume(dbConn, workerID, workerJobs, wg, mutex, seedMap)
+			Consume(ctx, dbConn, workerID, workerJobs, wg, mutex, seedMap)
 		}(i)
 	}
 	log.WithFields(log.Fields{"MaxConsumers": config.MFLIntegratorConf.Server.MaxConcurrent}).Info("Created Consumers: ")
@@ -868,7 +875,7 @@ const incompleteRequestsSQL = `
 
 // RetryIncompleteRequests is intended to occasionally retry incomplete requests - there could be a success chance
 // this could be scheduled to run every so often
-func RetryIncompleteRequests() {
+func RetryIncompleteRequests(ctx context.Context) {
 	log.Info("..::::::.. Starting to process Incomplete Requests ..::::::..")
 	dbConn := db.GetDB()
 	rows, err := dbConn.Queryx(incompleteRequestsSQL)
@@ -878,6 +885,14 @@ func RetryIncompleteRequests() {
 	}
 
 	for rows.Next() {
+		select {
+		case <-ctx.Done():
+			_ = rows.Close()
+			log.WithError(ctx.Err()).Info("Stopping incomplete request retry due to context cancellation")
+			return
+		default:
+		}
+
 		reqObj := RequestObj{}
 		err := rows.StructScan(&reqObj)
 		if err != nil {
@@ -900,7 +915,7 @@ func RetryIncompleteRequests() {
 						reqObj.updateRequest(tx)
 
 					} else {
-						_ = ProcessRequest(tx, reqObj, reqDestination, false, true)
+						_ = ProcessRequest(ctx, tx, reqObj, reqDestination, false, true)
 					}
 				} else {
 					reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
@@ -910,7 +925,7 @@ func RetryIncompleteRequests() {
 					if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 						log.WithFields(log.Fields{"CCServerID": item, "ServerIndex": index}).Info(
 							"- Incomplete Request Retry:")
-						return ProcessRequest(tx, reqObj, ccServer, true, true)
+						return ProcessRequest(ctx, tx, reqObj, ccServer, true, true)
 					} else {
 						log.WithField("ServerID", item).Info("Incomplete Request Retry: Sever not in Map")
 					}
@@ -934,7 +949,7 @@ func RetryIncompleteRequests() {
 								"Retries":     retries,
 								"RequestID":   reqObj.ID,
 							}).Info("+ Incomplete Request Retry")
-						return ProcessRequest(tx, reqObj, ccServer, true, true)
+						return ProcessRequest(ctx, tx, reqObj, ccServer, true, true)
 					} else {
 						log.WithFields(
 							log.Fields{
