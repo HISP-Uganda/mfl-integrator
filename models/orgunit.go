@@ -481,24 +481,14 @@ func (o *OrganisationUnit) UpdateMFLUID(mflUID string) {
 func GetOrgUnitByMFLID(mflid string) OrganisationUnit {
 	dbConn := db.GetDB()
 	var ou OrganisationUnit
-	rows, err := dbConn.Queryx(`SELECT id,hierarchylevel,path, uid FROM organisationunit WHERE mflid = $1`, mflid)
-	if err != nil {
-		log.WithError(err).WithField("MFLID", mflid).Info("Failed to get orgunit DBUID")
+	err := dbConn.Get(&ou, `SELECT id,hierarchylevel,path, uid FROM organisationunit WHERE mflid = $1`, mflid)
+	if err == nil {
+		return ou
 	}
-	for rows.Next() {
-		var id, path, uid string
-		var lvl int
-		err := rows.Scan(&id, &lvl, &path, &uid)
-		if err != nil {
-			// log.Fatalln("==>", err)
-			log.WithError(err).Error("Error reading parent organisation unit by mflid:")
-		}
-		ou.ID = id
-		ou.Level = lvl
-		ou.Path = path
-		ou.UID = uid
+	if errors.Is(err, sql.ErrNoRows) {
+		return OrganisationUnit{}
 	}
-	_ = rows.Close()
+	log.WithError(err).WithField("MFLID", mflid).Info("Failed to get orgunit DBUID")
 	return ou
 }
 
