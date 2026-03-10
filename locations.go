@@ -807,29 +807,22 @@ func FetchFacilities2(mflId, batchId string) {
 
 		facility := GetOrgUnitFromFacility(f, parentOrgUnitCache, usedUIDCache, orgUnitGroupUIDCache)
 
-		facilityJSON, err := json.Marshal(facility)
+		facilityMap, facilityJSON, err := buildFacilityPayload(facility)
 		if err != nil {
-			log.WithError(err).Info("Failed to marshal facility to JSON")
+			log.WithError(err).Info("Failed to build facility payload")
 			return nil
-		}
-		if facility.Geometry.Type == "" {
-			facilityJSON = utils.PatchJSONObject(facilityJSON, []byte(`[
-				{"op": "remove", "path": "/geometry"}
-			]`))
 		}
 		log.WithField("FacilityJson", string(facilityJSON)).Info("Facility Object")
 
 		if len(facility.Path) < 15 {
 			log.WithFields(log.Fields{
 				"UID": facility.UID, "Name": facility.Name, "Path": facility.Path}).Warn("Found no Parent for facility")
-			var fj dbutils.MapAnything
-			_ = json.Unmarshal(facilityJSON, &fj)
 			ouFailure := models.OrgUnitFailure{
 				UID:         utils.GetUID(),
 				FacilityUID: facility.UID,
 				MFLUID:      facility.MFLUID,
 				Reason:      "Parent not found",
-				Object:      fj,
+				Object:      facilityMap,
 				Action:      "MFL Fetch",
 			}
 			ouFailure.NewOrgUnitFailure()
@@ -850,8 +843,7 @@ func FetchFacilities2(mflId, batchId string) {
 			}
 
 			// Track the versions
-			var fj dbutils.MapAnything
-			_ = json.Unmarshal(facilityJSON, &fj)
+			fj := cloneMapAnything(facilityMap)
 			fj["parent"] = facility.ParentRef()
 
 			facilityRevision := models.OrgUnitRevision{
@@ -862,13 +854,8 @@ func FetchFacilities2(mflId, batchId string) {
 			}
 			facilityRevision.NewOrgUnitRevision()
 
-			facilityMetadata := models.MetadataOu{}
+			facilityMetadata := makeMetadataOu(facility)
 			facilityMetadata.Parent = facility.ParentRef()
-
-			err := json.Unmarshal(facilityJSON, &facilityMetadata)
-			if err != nil {
-				log.WithError(err).Error("Failed to unmarshal facility into Metadata object")
-			}
 			numberCreated++
 
 			// remove name and uid in organisationUnitGroups sent as part of metadata
@@ -881,16 +868,7 @@ func FetchFacilities2(mflId, batchId string) {
 				},
 			)
 
-			payload := make(map[string][]models.MetadataOu)
-			payload["organisationUnits"] = []models.MetadataOu{facilityMetadata}
-
-			reqBody, err := json.Marshal(payload)
-			if facilityMetadata.Geometry.Get("type", "") == "" {
-				reqBody = utils.PatchJSONObject(reqBody, []byte(
-					`[{"op": "remove", "path": "/organisationUnits/0/geometry"},
-					  {"op": "remove", "path": "/organisationUnits/0/organisationUnitGroups"}]`,
-				))
-			}
+			reqBody, err := metadataRequestBody(facilityMetadata, true)
 			if err != nil {
 				log.WithError(err).Error("Failed to marshal facility metadata")
 			}
@@ -956,9 +934,7 @@ func FetchFacilities2(mflId, batchId string) {
 
 		// facility exists
 		facility.ParentUID = syncState.ParentUID
-		var fj dbutils.MapAnything
-		_ = json.Unmarshal(facilityJSON, &fj)
-
+		fj := cloneMapAnything(facilityMap)
 		fj["parent"] = facility.ParentRef()
 		newMatchedOld, diffMap, err := models.CompareDefinition(fj, syncState.LatestRevision)
 		if err != nil {
@@ -977,7 +953,7 @@ func FetchFacilities2(mflId, batchId string) {
 		}
 
 		old, _ := json.Marshal(syncState.LatestRevision)
-		newDefinition, _ := json.Marshal(facility)
+		newDefinition, _ := json.Marshal(fj)
 
 		metadataPayloadFromDiff := models.GenerateMetadataPayload(diffMap)
 		log.WithFields(log.Fields{
@@ -1014,11 +990,7 @@ func FetchFacilities2(mflId, batchId string) {
 		}
 
 		// OU Groups update
-		facilityMetadata := models.MetadataOu{}
-		err = json.Unmarshal(facilityJSON, &facilityMetadata)
-		if err != nil {
-			log.WithError(err).Error("Updating OU: Failed to unmarshal facility into Metadata object")
-		}
+		facilityMetadata := makeMetadataOu(facility)
 
 		ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
 		requestForms := MakeOrgUnitGroupsAdditionRequests(
@@ -1448,6 +1420,93 @@ func nilString(p *string) any {
 		return nil
 	}
 	return s
+}
+
+func buildFacilityPayload(facility models.OrganisationUnit) (dbutils.MapAnything, []byte, error) {
+	facilityJSON, err := json.Marshal(facility)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var facilityMap dbutils.MapAnything
+	if err := json.Unmarshal(facilityJSON, &facilityMap); err != nil {
+		return nil, nil, err
+	}
+	if facility.Geometry.Type == "" {
+		delete(facilityMap, "geometry")
+	}
+
+	normalizedJSON, err := json.Marshal(facilityMap)
+	if err != nil {
+		return nil, nil, err
+	}
+	return facilityMap, normalizedJSON, nil
+}
+
+func cloneMapAnything(src dbutils.MapAnything) dbutils.MapAnything {
+	cloned := make(dbutils.MapAnything, len(src))
+	for k, v := range src {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func makeMetadataOu(facility models.OrganisationUnit) models.MetadataOu {
+	metadata := models.MetadataOu{
+		UID:         facility.UID,
+		Level:       facility.Level,
+		Name:        facility.Name,
+		ShortName:   facility.ShortName,
+		Description: facility.Description,
+		Email:       facility.Email,
+		Address:     facility.Address,
+		Phone:       facility.PhoneNumber,
+		OpeningDate: facility.OpeningDate,
+	}
+
+	if facility.ValidateUID() {
+		metadata.Parent = facility.ParentRef()
+	}
+	if facility.Geometry.Type != "" {
+		geometry := dbutils.Map{}
+		geometry.Set("type", facility.Geometry.Type)
+		var coords any
+		if err := json.Unmarshal(facility.Geometry.Coordinates, &coords); err == nil {
+			geometry.Set("coordinates", coords)
+			metadata.Geometry = geometry
+		}
+	}
+	if len(facility.AttributeValues) > 0 {
+		var attributeValues []dbutils.Map
+		if err := json.Unmarshal(facility.AttributeValues, &attributeValues); err == nil {
+			metadata.AttributeValues = attributeValues
+		}
+	}
+	if len(facility.OrgUnitGroups) > 0 {
+		metadata.OrganisationUnitGroups = make([]dbutils.Map, 0, len(facility.OrgUnitGroups))
+		for _, group := range facility.OrgUnitGroups {
+			groupMap := dbutils.Map{}
+			groupMap.Set("id", group.ID)
+			metadata.OrganisationUnitGroups = append(metadata.OrganisationUnitGroups, groupMap)
+		}
+	}
+	return metadata
+}
+
+func metadataRequestBody(metadata models.MetadataOu, omitGroups bool) ([]byte, error) {
+	payloadOU := metadata
+	if payloadOU.Geometry.Get("type", "") == "" {
+		payloadOU.Geometry = dbutils.Map{}
+	}
+	if omitGroups {
+		payloadOU.OrganisationUnitGroups = nil
+	}
+
+	payload := map[string][]models.MetadataOu{
+		"organisationUnits": {payloadOU},
+	}
+
+	return json.Marshal(payload)
 }
 
 func refName(r *clients.RefEntity) any {
