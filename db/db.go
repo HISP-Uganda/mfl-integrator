@@ -4,6 +4,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/golang-migrate/migrate/v4"
@@ -15,31 +16,65 @@ import (
 	_ "github.com/lib/pq" //import postgres
 )
 
-var db *sqlx.DB
+var DB *sqlx.DB
 
-func init() {
-	psqlInfo := config.MFLIntegratorConf.Database.URI
-	//
-	var err error
-	db, err = ConnectDB(psqlInfo)
-	if err != nil {
-		log.Fatal(err)
+// Init initializes the global DB after config is loaded.
+func Init() error {
+	if config.MFLIntegratorConf.Database.URI == "" {
+		return fmt.Errorf("database uri is empty (config not loaded?)")
 	}
+
+	dsn := config.MFLIntegratorConf.Database.URI
+
+	conn, err := ConnectDB(dsn)
+	if err != nil {
+		return err
+	}
+
+	DB = conn
+	return nil
 }
 
 // ConnectDB ...
 func ConnectDB(dataSourceName string) (*sqlx.DB, error) {
 	db, err := sqlx.Connect("postgres", dataSourceName)
 	if err != nil {
-		log.Fatalln(err)
 		return nil, err
 	}
+
+	db.SetMaxOpenConns(config.MFLIntegratorConf.Database.MaxOpenConns)
+	db.SetMaxIdleConns(config.MFLIntegratorConf.Database.MaxIdleConns)
+
+	if lifetime := config.MFLIntegratorConf.Database.ConnMaxLifetime; lifetime != "" {
+		d, err := time.ParseDuration(lifetime)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("parse database.conn_max_lifetime: %w", err)
+		}
+		db.SetConnMaxLifetime(d)
+	}
+	if idleTime := config.MFLIntegratorConf.Database.ConnMaxIdleTime; idleTime != "" {
+		d, err := time.ParseDuration(idleTime)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("parse database.conn_max_idle_time: %w", err)
+		}
+		db.SetConnMaxIdleTime(d)
+	}
+
 	return db, nil
+}
+
+func Close() error {
+	if DB == nil {
+		return nil
+	}
+	return DB.Close()
 }
 
 // GetDB ...
 func GetDB() *sqlx.DB {
-	return db
+	return DB
 }
 
 //go:embed migrations/*.sql

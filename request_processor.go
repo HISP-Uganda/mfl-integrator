@@ -215,7 +215,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 		})
 		if len(ccServers) > 0 {
 			var ccServerStatus ServerStatus
-			if ccServerObject, ok := models.ServerMap[fmt.Sprintf("%d", ccServers[0])]; ok {
+			if ccServerObject, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", ccServers[0])); ok {
 				// get server status from request
 				if ccstatusObj, ok := r.CCServersStatus[fmt.Sprintf("%d", ccServerObject.ID())]; ok {
 
@@ -563,8 +563,12 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 		fmt.Printf("Message %v is consumed by worker %v.\n", req, worker)
 
 		reqObj := RequestObj{}
-		tx := db.MustBegin()
-		err := tx.QueryRowx(`
+		tx, err := db.Beginx()
+		if err != nil {
+			log.WithError(err).WithField("worker", worker).Error("Failed to begin request transaction")
+			continue
+		}
+		err = tx.QueryRowx(`
                 SELECT
                         id, depends_on,source, destination, cc_servers, cc_servers_status, body, retries, in_submission_period(destination),
                         ctype, object_type, body_is_query_param, submissionid, url_suffix,suspended,
@@ -574,6 +578,8 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
                 WHERE id = $1 FOR UPDATE NOWAIT`, req).StructScan(&reqObj)
 		if err != nil {
 			log.WithError(err).Error("Error reading request for processing")
+			_ = tx.Rollback()
+			continue
 		}
 		log.WithFields(log.Fields{
 			"worker":    worker,
@@ -581,7 +587,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 		/* Work on the request */
 		// dest = utils.GetServer(reqObj.Destination)
 		// log.WithFields(log.Fields{"servers": models.ServerMap}).Info("Servers")
-		if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
+		if reqDestination, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", reqObj.Destination)); ok {
 			if config.MFLIntegratorConf.Server.FakeSyncToBaseDHIS2 {
 				reqObj.withStatus(models.RequestStatusCompleted).updateRequestStatus(tx)
 				reqObj.StatusCode = "FAKED"
@@ -591,7 +597,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 			}
 
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
-				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
+				if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 					log.WithFields(log.Fields{"CCServerID": item, "ServerIndex=>": index}).Info("!CC Server:")
 					return ProcessRequest(tx, reqObj, ccServer, true, false)
 				} else {
@@ -603,7 +609,7 @@ func Consume(db *sqlx.DB, worker int, jobs <-chan int, wg *sync.WaitGroup, mutex
 			// Using Go lodash to process
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
 				log.WithFields(log.Fields{"CCServerID": item, "ServerIndex==>": index}).Info("!!CC Server:")
-				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
+				if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 					return ProcessRequest(tx, reqObj, ccServer, true, false)
 				} else {
 					log.WithField("ServerID", item).Info("Sever not in Map>")
@@ -776,42 +782,26 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 func StartConsumers(ctx context.Context, jobs <-chan int, wg *sync.WaitGroup, mutex *sync.RWMutex, seedMap map[models.RequestID]bool) {
 	defer wg.Done()
 
-	dbURI := config.MFLIntegratorConf.Database.URI
-
 	fmt.Printf("Going to create %d Consumers!!!!!\n", config.MFLIntegratorConf.Server.MaxConcurrent)
 	// Internal channel we can close to stop workers gracefully.
 	workerJobs := make(chan int)
+	dbConn := db.GetDB()
 
 	// We wait for all Consume goroutines here, so StartConsumers doesn't return immediately.
 	var workersWG sync.WaitGroup
 
 	// Start the consumer workers.
 	for i := 1; i <= config.MFLIntegratorConf.Server.MaxConcurrent; i++ {
-		newConn, err := sqlx.Connect("postgres", dbURI)
-		if err != nil {
-			// Don't fatally exit the entire process from a worker manager goroutine.
-			log.WithError(err).Error("Request processor failed to connect to database")
-			// Stop any workers already started and return.
-			close(workerJobs)
-			workersWG.Wait()
-			return
-		}
-
 		fmt.Printf("Adding Consumer: %d\n", i)
 
 		workersWG.Add(1)
 		wg.Add(1)
-		go func(workerID int, conn *sqlx.DB) {
+		go func(workerID int) {
 			defer workersWG.Done()
-			defer func() {
-				if err := conn.Close(); err != nil {
-					log.WithError(err).WithField("worker", workerID).Warn("Failed to close consumer DB connection")
-				}
-			}()
 
 			// Consume exits when workerJobs is closed.
-			Consume(conn, workerID, workerJobs, wg, mutex, seedMap)
-		}(i, newConn)
+			Consume(dbConn, workerID, workerJobs, wg, mutex, seedMap)
+		}(i)
 	}
 	log.WithFields(log.Fields{"MaxConsumers": config.MFLIntegratorConf.Server.MaxConcurrent}).Info("Created Consumers: ")
 
@@ -881,10 +871,14 @@ func RetryIncompleteRequests() {
 		}
 		log.WithFields(log.Fields{
 			"requestID": reqObj.ID}).Info("Handling Incomplete Request")
-		tx := dbConn.MustBegin()
+		tx, err := dbConn.Beginx()
+		if err != nil {
+			log.WithError(err).WithField("requestID", reqObj.ID).Error("Failed to begin retry transaction")
+			continue
+		}
 
 		if reqObj.Status == "failed" { // destination server request had failed
-			if reqDestination, ok := models.ServerMap[fmt.Sprintf("%d", reqObj.Destination)]; ok {
+			if reqDestination, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", reqObj.Destination)); ok {
 				if reqObj.Retries <= config.MFLIntegratorConf.Server.MaxRetries {
 					if config.MFLIntegratorConf.Server.FakeSyncToBaseDHIS2 {
 						reqObj.StatusCode = "FAKED"
@@ -899,7 +893,7 @@ func RetryIncompleteRequests() {
 				}
 
 				lo.Map(reqObj.CCServers, func(item int32, index int) error {
-					if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
+					if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 						log.WithFields(log.Fields{"CCServerID": item, "ServerIndex": index}).Info(
 							"- Incomplete Request Retry:")
 						return ProcessRequest(tx, reqObj, ccServer, true, true)
@@ -911,7 +905,7 @@ func RetryIncompleteRequests() {
 			}
 		} else {
 			lo.Map(reqObj.CCServers, func(item int32, index int) error {
-				if ccServer, ok := models.ServerMap[fmt.Sprintf("%d", item)]; ok {
+				if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 
 					// get cc server's status
 					var ccServerStatus map[string]any

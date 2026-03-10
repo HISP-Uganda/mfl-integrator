@@ -56,6 +56,6 @@ func ClearLogs(mflId string) {
 	}
 	_, err = db.Exec("DELETE FROM orgunitrevision WHERE district = $1", mflId)
 	if err != nil {
-		log.WithError(err).Error("Failed to clear orgUnit revisions for %s", mflId)
+		log.WithError(err).WithField("MFLUID", mflId).Error("Failed to clear orgUnit revisions")
 	}
 }

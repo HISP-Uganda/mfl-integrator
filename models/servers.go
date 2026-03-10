@@ -68,34 +68,70 @@ type Server struct {
 	}
 }
 
-// ReloadServersFromDB refreshes the in-memory ServerMap and ServerMapByName from the DB.
+//// ReloadServersFromDB refreshes the in-memory ServerMap and ServerMapByName from the DB.
+//// Call this after migrations and after importing servers from config files.
+//func ReloadServersFromDB() {
+//	// Ensure the base server exists (keeps existing behavior).
+//	// If you later change CreateBaseDHIS2Server to return an error, wire it in here.
+//	CreateBaseDHIS2Server()
+//	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
+//
+//	if err != nil {
+//		log.WithError(err).Info("Failed to load servers")
+//	}
+//	ServerMap = make(map[string]Server)
+//	ServerMapByName = make(map[string]Server)
+//	for rows.Next() {
+//		srv := Server{}
+//
+//		err := rows.StructScan(&srv.s)
+//		if err != nil {
+//			log.Fatalln("Server Loading ==>", err)
+//		}
+//
+//		ServerMap[strconv.Itoa(int(srv.s.ID))] = srv
+//		ServerMapByName[srv.s.Name] = srv
+//		// log.WithField("SERVER", srv.s).Info("=====>")
+//
+//	}
+//	// log.WithField("ServerMapByName", ServerMapByName).Info("========>")
+//	_ = rows.Close()
+//}
+
+// ReloadServersFromDB refreshes the in-memory server registry from the DB.
 // Call this after migrations and after importing servers from config files.
 func ReloadServersFromDB() {
-	// Ensure the base server exists (keeps existing behavior).
-	// If you later change CreateBaseDHIS2Server to return an error, wire it in here.
 	CreateBaseDHIS2Server()
-	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
 
+	rows, err := db.GetDB().Queryx("SELECT * FROM servers")
 	if err != nil {
 		log.WithError(err).Info("Failed to load servers")
+		return
 	}
-	ServerMap = make(map[string]Server)
-	ServerMapByName = make(map[string]Server)
+	defer func() { _ = rows.Close() }()
+
+	nextByID := make(map[string]Server)
+	nextByName := make(map[string]Server)
+
 	for rows.Next() {
 		srv := Server{}
-
-		err := rows.StructScan(&srv.s)
-		if err != nil {
-			log.Fatalln("Server Loading ==>", err)
+		if err := rows.StructScan(&srv.s); err != nil {
+			log.WithError(err).Error("Server Loading: failed to scan row")
+			continue
 		}
 
-		ServerMap[strconv.Itoa(int(srv.s.ID))] = srv
-		ServerMapByName[srv.s.Name] = srv
-		// log.WithField("SERVER", srv.s).Info("=====>")
-
+		idKey := strconv.Itoa(int(srv.s.ID))
+		nextByID[idKey] = srv
+		nextByName[srv.s.Name] = srv
 	}
-	// log.WithField("ServerMapByName", ServerMapByName).Info("========>")
-	_ = rows.Close()
+
+	// Publish the new snapshot for lock-free reads.
+	ReplaceServerRegistry(nextByID, nextByName)
+
+	// Optional: keep legacy globals in sync during migration.
+	// Once all reads are moved to the registry accessors, you can delete these globals.
+	ServerMap = nextByID
+	ServerMapByName = nextByName
 }
 
 // ServerAllowedApps hold servers and servers they allow to communicate with

@@ -1075,17 +1075,23 @@ func FetchFacilitiesByDistrict() {
 		FetchFacilities2("", batchId)
 		return
 	}
+
+	districts := make([]string, 0)
 	for rows.Next() {
 		var district string
 		err := rows.Scan(&district)
-		log.WithField("District", district).Info("Syncing Facilities")
 		if err != nil {
 			log.WithError(err).Error("Error reading district mflid from database:")
 			continue
 		}
-		FetchFacilities2(district, batchId)
+		districts = append(districts, district)
 	}
 	_ = rows.Close()
+
+	for _, district := range districts {
+		log.WithField("District", district).Info("Syncing Facilities")
+		FetchFacilities2(district, batchId)
+	}
 	log.Info("Finished Fetching Facilities By District")
 }
 
@@ -1197,7 +1203,7 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 			ou := models.UsedUID{UID: historicalId, MFLUID: mflUniqueIdentifier}
 			ou.NewUsedUID() // log it to DB
 		}
-		log.WithField("Facility", name).Debug("No Historical identifier found for facility %v", historicalId)
+		log.WithFields(log.Fields{"Facility": name, "UID": historicalId}).Debug("No Historical identifier found for facility")
 	}
 
 	facility.OpeningDate = tempOpening.Format("2006-01-02")
@@ -1265,7 +1271,7 @@ func GetOrgUnitFromFacility(f clients.Facility) models.OrganisationUnit {
 			ou := models.UsedUID{UID: historicalID, MFLUID: mflUID}
 			ou.NewUsedUID()
 		}
-		log.WithField("Facility", name).Debug("No historical_id found for facility, generated UID=%v", historicalID)
+		log.WithFields(log.Fields{"Facility": name, "UID": historicalID}).Debug("No historical_id found for facility")
 	}
 
 	// Parent resolution:

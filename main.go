@@ -18,7 +18,6 @@ import (
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/gin-gonic/gin"
 	"github.com/go-co-op/gocron"
-	"github.com/jmoiron/sqlx"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
 	log "github.com/sirupsen/logrus"
 )
@@ -56,25 +55,32 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	dbConn, err := sqlx.Connect("postgres", config.MFLIntegratorConf.Database.URI)
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v\n", err)
+	// Load configuration first (before you read config.MFLIntegratorConf anywhere).
+	if err := config.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+	log.WithField("CONFIG", config.MFLIntegratorConf).Info("Loaded config")
+
+	if err := db.Init(); err != nil {
+		log.Fatalf("Main: failed to init database: %v\n", err)
 	}
 
-	defer func() {
-		if err := dbConn.Close(); err != nil {
-			log.WithError(err).Warn("Failed to close DB connection pool")
-		}
-	}()
-
 	// log.WithField("DHIS2_SERVER_CONFIGS", config.MFLDHIS2ServersConfigMap).Info("SERVER: =======>")
-	err = db.RunMigrations()
+	err := db.RunMigrations()
 	if err != nil {
 		log.Fatalf("Failed to run database migrations %v\n", err)
 	}
-	LoadServersFromConfigFiles(config.MFLDHIS2ServersConfigMap)
-	// log.WithFields(log.Fields{"Servers": models.ServerMapByName["localhost"]}).Info("SERVERS==>>")
-	// os.Exit(1)
+
+	// Source of truth: conf.d -> upsert into DB + refresh in-memory server maps.
+	LoadServersFromConfigFiles(config.GetDHIS2ServersConfigMap())
+
+	// Watch conf.d and re-apply on every change.
+	if err := config.WatchConfD(ctx, config.ConfDDir, func(m map[string]config.ServerConf) {
+		LoadServersFromConfigFiles(m)
+	}); err != nil {
+		log.WithError(err).Warn("conf.d watcher not started")
+	}
 
 	models.ReloadServersFromDB()
 
@@ -89,12 +95,13 @@ func main() {
 	go func() {
 		// Create a new scheduler
 		s := gocron.NewScheduler(time.UTC)
+		s.SetMaxConcurrentJobs(1, gocron.RescheduleMode)
 		// Schedule the task to run "30 minutes after midn, 4am, 8am, 12pm..., everyday"
 		// if the --mfl-sync-schedule-off flag is present, we ignore
 		if !*config.MFLSyncScheduleOFF {
 			log.WithFields(log.Fields{"SyncCronExpression": config.MFLIntegratorConf.API.SyncCronExpression}).Info(
 				"Facility Synchronisation Cron Expression")
-			_, err := s.Cron(config.MFLIntegratorConf.API.SyncCronExpression).Do(FetchFacilitiesByDistrict)
+			_, err := s.Cron(config.MFLIntegratorConf.API.SyncCronExpression).SingletonMode().Do(FetchFacilitiesByDistrict)
 			// _, err := s.CronWithSeconds("* * * * * *").Do(task)
 			if err != nil {
 				log.WithError(err).Error("Error scheduling facility sync task:")
@@ -106,7 +113,7 @@ func main() {
 		log.WithFields(log.Fields{"RetryCronExpression": config.MFLIntegratorConf.API.RetryCronExpression}).Info(
 			"Request Retry Cron Expression")
 		if !*config.SkipRequestProcessing {
-			_, err = s.Cron(config.MFLIntegratorConf.API.RetryCronExpression).Do(RetryIncompleteRequests)
+			_, err = s.Cron(config.MFLIntegratorConf.API.RetryCronExpression).SingletonMode().Do(RetryIncompleteRequests)
 			if err != nil {
 				log.WithError(err).Error("Error scheduling incomplete request retry task:")
 			}
@@ -179,7 +186,7 @@ func main() {
 
 		// Start the producer goroutine
 		wg.Add(1)
-		go Produce(ctx, dbConn, jobs, &wg, mutex, seenMap)
+		go Produce(ctx, db.GetDB(), jobs, &wg, mutex, seenMap)
 
 		// Start the consumer goroutine
 		wg.Add(1)
@@ -193,6 +200,10 @@ func main() {
 	}
 
 	wg.Wait()
+	if err := db.Close(); err != nil {
+		log.WithError(err).Warn("db close failed")
+	}
+	log.Info("shutdown complete!")
 }
 
 func startAPIServer(ctx context.Context, wg *sync.WaitGroup, serverErrCh chan<- error) {

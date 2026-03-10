@@ -11,13 +11,10 @@ import (
 )
 
 func LoadServersFromConfigFiles(serverConfMap map[string]config.ServerConf) {
-	// Ensure maps exist (prevents: panic: assignment to entry in nil map)
-	if models.ServerMap == nil {
-		models.ServerMap = make(map[string]models.Server)
-	}
-	if models.ServerMapByName == nil {
-		models.ServerMapByName = make(map[string]models.Server)
-	}
+	dbConn := db.GetDB()
+
+	nextByID := make(map[string]models.Server, len(serverConfMap))
+	nextByName := make(map[string]models.Server, len(serverConfMap))
 
 	for k := range serverConfMap {
 		serverJSON, err := json.Marshal(serverConfMap[k])
@@ -26,14 +23,16 @@ func LoadServersFromConfigFiles(serverConfMap map[string]config.ServerConf) {
 			continue
 		}
 
-		dbConn := db.GetDB()
 		srv, err := models.CreateServerFromJSON(dbConn, serverJSON)
 		if err != nil {
 			log.WithError(err).Error("Failed to create/update server")
 			continue
 		}
 
-		models.ServerMap[strconv.Itoa(int(srv.ID()))] = srv
-		models.ServerMapByName[srv.Name()] = srv
+		nextByID[strconv.Itoa(int(srv.ID()))] = srv
+		nextByName[srv.Name()] = srv
 	}
+
+	// Atomic swap: readers always see a consistent snapshot.
+	models.ReplaceServerRegistry(nextByID, nextByName)
 }
