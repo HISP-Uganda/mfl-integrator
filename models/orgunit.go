@@ -191,6 +191,7 @@ type OrganisationUnit struct {
 	MFLID            string              `db:"mflid" json:"mflId,omitempty"`
 	MFLUID           string              `db:"mfluid" json:"mflUID,omitempty"`
 	MFLParent        sql.NullString      `db:"mflparent" json:"mflParent,omitempty"`
+	ParentUID        string              `db:"-" json:"-"`
 	OpeningDate      string              `db:"openingdate" json:"openingDate"`
 	ClosedDate       string              `db:"closeddate" json:"closedDate,omitempty"`
 	Deleted          bool                `db:"deleted" json:"deleted,omitempty"`
@@ -257,6 +258,10 @@ func (o *OrganisationUnit) ParentByUID() dbutils.Map {
 	dbConn := db.GetDB()
 	parentUID := ""
 	var parentMap dbutils.Map
+	if o.ParentUID != "" {
+		parentMap.Map()["id"] = o.ParentUID
+		return parentMap
+	}
 	if o.ValidateUID() {
 		err := dbConn.Get(&parentUID, `SELECT uid FROM organisationunit WHERE id = 
             (SELECT parentid FROM organisationunit WHERE uid = $1)`, o.UID)
@@ -268,6 +273,15 @@ func (o *OrganisationUnit) ParentByUID() dbutils.Map {
 	}
 	return parentMap
 
+}
+
+func (o *OrganisationUnit) ParentRef() dbutils.Map {
+	if o.ParentUID != "" {
+		var parentMap dbutils.Map
+		parentMap.Map()["id"] = o.ParentUID
+		return parentMap
+	}
+	return o.ParentByUID()
 }
 
 func (o *OrganisationUnit) GetGroups() []OrgUnitGroup {
@@ -374,24 +388,22 @@ func (o *OrganisationUnit) OrganisationUnitDBFields() []string {
 
 const insertOrgUnitSQL = `
 INSERT INTO organisationunit (uid,name, shortname,path, parentid, hierarchylevel,address,
-        email,phonenumber,url,mflid,extras,attributevalues, openingdate, created, updated)
+        email,phonenumber,url,mflid,mfluid,mflparent,extras,attributevalues, openingdate, created, updated)
 VALUES (:uid, :name,  :shortname, :path, ou_paraent_from_path(:path, :hierarchylevel), 
-        :hierarchylevel, :address, :email, :phonenumber, :url, :mflid, :extras, :attributevalues, :openingdate, now(), now())
+        :hierarchylevel, :address, :email, :phonenumber, :url, :mflid, :mfluid, :mflparent, :extras, :attributevalues, :openingdate, now(), now())
 RETURNING id
 `
 
 func (o *OrganisationUnit) ExistsInDB() bool {
-	dbConn := db.GetDB()
-	var count int
-	err := dbConn.Get(&count, "SELECT count(*) FROM organisationunit WHERE uid = $1", o.UID)
+	_, exists, err := GetOrganisationUnitSyncState(o.UID)
 	if err != nil {
 		log.WithError(err).Info("Error reading organisation unit:")
 		return false
 	}
-	return count > 0
+	return exists
 }
 
-func (o *OrganisationUnit) NewOrgUnit() {
+func (o *OrganisationUnit) NewOrgUnit() int64 {
 	dbConn := db.GetDB()
 	rows, err := dbConn.NamedQuery(insertOrgUnitSQL, o)
 	if err != nil {
@@ -402,21 +414,24 @@ func (o *OrganisationUnit) NewOrgUnit() {
 		ouFailure := OrgUnitFailure{UID: utils.GetUID(),
 			FacilityUID: o.UID, MFLUID: o.MFLUID, Reason: err.Error(), Object: facilityJSON, Action: "Add"}
 		ouFailure.NewOrgUnitFailure()
-		return
+		return 0
 	}
+	var orgUnitID int64
 	for rows.Next() {
 		var id sql.NullInt64
 		_ = rows.Scan(&id)
+		orgUnitID = id.Int64
 		log.WithFields(log.Fields{"ID": id.Int64, "UID": o.UID, "OuByID": o.ID}).Info("Created New OrgUnit")
 		o.UpdateGeometry()
 		if len(o.OrgUnitGroups) > 0 {
 			log.WithField("Groups", o.OrgUnitGroups).Info("Groups on Ou:", o.ID)
 			for _, ouGroup := range o.OrgUnitGroups {
-				o.AddToGroup(ouGroup)
+				o.AddToGroupByOrgUnitID(id.Int64, ouGroup)
 			}
 		}
 	}
 	_ = rows.Close()
+	return orgUnitID
 }
 
 func CompareDefinition(newDefinition, latestDefinition dbutils.MapAnything) (bool, dbutils.MapAnything, error) {
@@ -502,9 +517,13 @@ func GetOrgUnitByMFLUID(mfluid string) OrganisationUnit {
 }
 
 func (o *OrganisationUnit) AddToGroup(ouGroup OrgUnitGroup) {
+	o.AddToGroupByOrgUnitID(o.DBID(), ouGroup)
+}
+
+func (o *OrganisationUnit) AddToGroupByOrgUnitID(orgUnitID int64, ouGroup OrgUnitGroup) {
 	dbConn := db.GetDB()
 	_, err := dbConn.Exec(`INSERT INTO orgunitgroupmembers (organisationunitid, orgunitgroupid, created, updated)
-    			VALUES($1, $2, NOW(), NOW())`, o.DBID(), ouGroup.DBID())
+    			VALUES($1, $2, NOW(), NOW())`, orgUnitID, ouGroup.DBID())
 	if err != nil {
 		log.WithError(err).WithFields(log.Fields{"OuUID": o.UID, "oUGroup": ouGroup, "oUGroups": o.OrgUnitGroups}).Info(
 			"Failed to add orgunit to group")
@@ -604,17 +623,47 @@ type OrgUnitRevision struct {
 	Updated             string              `db:"updated" json:"updated,omitempty"`
 }
 
-func (o *OrganisationUnit) GetLatestRevision() []byte {
+type OrganisationUnitSyncState struct {
+	DBID           int64               `db:"id"`
+	ParentUID      string              `db:"parent_uid"`
+	LatestRevision dbutils.MapAnything `db:"latest_revision"`
+}
+
+func GetOrganisationUnitSyncState(uid string) (OrganisationUnitSyncState, bool, error) {
 	dbConn := db.GetDB()
-	var definition dbutils.MapAnything
-	err := dbConn.Get(&definition, `SELECT 
-		definition FROM orgunitrevision WHERE orgunitrevision.organisationunit_id = $1 
-		ORDER BY revision DESC LIMIT 1`, o.DBID())
+	var state OrganisationUnitSyncState
+	err := dbConn.Get(&state, `SELECT
+		ou.id,
+		COALESCE(parent.uid, '') AS parent_uid,
+		COALESCE((
+			SELECT definition
+			FROM orgunitrevision
+			WHERE organisationunit_id = ou.id
+			ORDER BY revision DESC
+			LIMIT 1
+		), '{}'::jsonb) AS latest_revision
+	FROM organisationunit ou
+	LEFT JOIN organisationunit parent ON parent.id = ou.parentid
+	WHERE ou.uid = $1`, uid)
+	if err == nil {
+		return state, true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return OrganisationUnitSyncState{}, false, nil
+	}
+	return OrganisationUnitSyncState{}, false, err
+}
+
+func (o *OrganisationUnit) GetLatestRevision() []byte {
+	state, exists, err := GetOrganisationUnitSyncState(o.UID)
 	if err != nil {
 		log.WithField("Facility UID", o.UID).WithError(err).Info("Failed to Get Facility's latest revision")
 		return []byte(`{}`)
 	}
-	ret, _ := json.Marshal(definition)
+	if !exists {
+		return []byte(`{}`)
+	}
+	ret, _ := json.Marshal(state.LatestRevision)
 	return ret
 }
 

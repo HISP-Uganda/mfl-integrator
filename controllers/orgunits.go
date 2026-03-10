@@ -22,7 +22,7 @@ func (o *OrgUnitController) OrgUnit(c *gin.Context) {
 	var ou models.OrganisationUnit
 	if c.ShouldBind(&ou) == nil {
 		fmt.Printf("%v\n", ou)
-		ou.NewOrgUnit()
+		_ = ou.NewOrgUnit()
 		//_, err := db.NamedExec(insertOrgUnitSQL, ou)
 		//if err != nil {
 		//	fmt.Printf("ERROR INSERTING OrgUnit", err)

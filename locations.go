@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,7 +215,7 @@ func LoadLocations() {
 				log.WithFields(
 					log.Fields{"uid": ous[i].ID, "name": ous[i].Name, "level": ous[i].Level,
 						"Geometry-Type": ous[i].Geometry.Type}).Info("Creating New Orgunit")
-				ous[i].NewOrgUnit()
+				_ = ous[i].NewOrgUnit()
 			}
 
 			p.Del("level")
@@ -832,22 +833,26 @@ func FetchFacilities2(mflId, batchId string) {
 			return nil
 		}
 
-		if !facility.ExistsInDB() {
-			// facility doesn't exist in our DB
-			facility.NewOrgUnit()
+		syncState, existsInDB, err := models.GetOrganisationUnitSyncState(facility.UID)
+		if err != nil {
+			log.WithError(err).WithField("UID", facility.UID).Error("Failed to load facility sync state")
+			return nil
+		}
 
-			facility.UpdateMFLID(facility.MFLID)
-			facility.UpdateMFLParent(facility.MFLParent.String)
-			facility.UpdateMFLUID(facility.MFLUID)
-			facility.UpdateGeometry()
+		if !existsInDB {
+			// facility doesn't exist in our DB
+			orgUnitID := facility.NewOrgUnit()
+			if orgUnitID == 0 {
+				return nil
+			}
 
 			// Track the versions
 			var fj dbutils.MapAnything
 			_ = json.Unmarshal(facilityJSON, &fj)
-			fj["parent"] = facility.ParentByUID()
+			fj["parent"] = facility.ParentRef()
 
 			facilityRevision := models.OrgUnitRevision{
-				OrganisationUnitUID: dbutils.Int(facility.DBID()),
+				OrganisationUnitUID: dbutils.Int(orgUnitID),
 				Revision:            0,
 				Definition:          fj,
 				UID:                 utils.GetUID(),
@@ -855,7 +860,7 @@ func FetchFacilities2(mflId, batchId string) {
 			facilityRevision.NewOrgUnitRevision()
 
 			facilityMetadata := models.MetadataOu{}
-			facilityMetadata.Parent = facility.ParentByUID()
+			facilityMetadata.Parent = facility.ParentRef()
 
 			err := json.Unmarshal(facilityJSON, &facilityMetadata)
 			if err != nil {
@@ -945,12 +950,12 @@ func FetchFacilities2(mflId, batchId string) {
 		}
 
 		// facility exists
-		var fj, latestRevision dbutils.MapAnything
+		facility.ParentUID = syncState.ParentUID
+		var fj dbutils.MapAnything
 		_ = json.Unmarshal(facilityJSON, &fj)
-		_ = json.Unmarshal(facility.GetLatestRevision(), &latestRevision)
 
-		fj["parent"] = facility.Parent()
-		newMatchedOld, diffMap, err := models.CompareDefinition(fj, latestRevision)
+		fj["parent"] = facility.ParentRef()
+		newMatchedOld, diffMap, err := models.CompareDefinition(fj, syncState.LatestRevision)
 		if err != nil {
 			log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
 		}
@@ -966,7 +971,7 @@ func FetchFacilities2(mflId, batchId string) {
 			return nil
 		}
 
-		old, _ := json.Marshal(latestRevision)
+		old, _ := json.Marshal(syncState.LatestRevision)
 		newDefinition, _ := json.Marshal(facility)
 
 		metadataPayloadFromDiff := models.GenerateMetadataPayload(diffMap)
@@ -982,7 +987,7 @@ func FetchFacilities2(mflId, batchId string) {
 
 		// revision
 		facilityRevision := models.OrgUnitRevision{
-			OrganisationUnitUID: dbutils.Int(facility.DBID()),
+			OrganisationUnitUID: dbutils.Int(syncState.DBID),
 			Revision:            0,
 			Definition:          fj,
 			UID:                 utils.GetUID(),
@@ -1361,7 +1366,15 @@ func GetOrgUnitFromFacility(f clients.Facility) models.OrganisationUnit {
 
 	// Hierarchy (best-effort; depends on parentOrgUnit existence)
 	facility.Level = parentOrgUnit.Level + 1
-	facility.ParentID = parentOrgUnit.ParentID
+	facility.ParentUID = parentOrgUnit.UID
+	if parentOrgUnit.ID != "" {
+		parentID, err := strconv.ParseInt(parentOrgUnit.ID, 10, 64)
+		if err != nil {
+			log.WithError(err).WithField("ParentID", parentOrgUnit.ID).Debug("Failed to parse parent organisation unit id")
+		} else {
+			facility.ParentID = dbutils.Int(parentID)
+		}
+	}
 	if strings.TrimSpace(parentOrgUnit.Path) != "" {
 		facility.Path = parentOrgUnit.Path + "/" + historicalID
 	}
