@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"fmt"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
@@ -26,7 +27,11 @@ func (q *QueueController) Queue(c *gin.Context) {
 	req, err := models.NewRequestFromPOST(c, db)
 	if err != nil {
 		log.WithError(err).Error("Failed to add request to queue")
-		c.String(http.StatusBadGateway, "Failed to add request to queue")
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, models.ErrInvalidQueueRequest) {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 

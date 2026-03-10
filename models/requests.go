@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"reflect"
 	"strconv"
 	"strings"
@@ -36,6 +37,8 @@ const (
 	RequestStatusFailed    = RequestStatus("failed")
 	RequestStatusCanceled  = RequestStatus("canceled")
 )
+
+var ErrInvalidQueueRequest = errors.New("invalid queue request")
 
 // Request represents our requests queue in the database
 type Request struct {
@@ -204,6 +207,9 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 	// r := &req.r
 	src := c.DefaultQuery("source", "localhost")
 	dest := c.Query("destination")
+	if strings.TrimSpace(dest) == "" {
+		return *req, fmt.Errorf("%w: destination query parameter is required", ErrInvalidQueueRequest)
+	}
 	// source := ServerMapByName[src]
 	// destination, ok := ServerMapByName[dest]
 
@@ -212,11 +218,19 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 	//
 	//}
 	contentType := c.Request.Header.Get("Content-Type")
+	mediaType := contentType
+	if mediaType != "" {
+		parsedMediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			return *req, fmt.Errorf("%w: invalid Content-Type %q", ErrInvalidQueueRequest, contentType)
+		}
+		mediaType = parsedMediaType
+	}
 	year, week := time.Now().ISOWeek()
 	reqF := RequestForm{
 		Source:       src,
 		Destination:  dest,
-		ContentType:  "application/json",
+		ContentType:  mediaType,
 		Year:         c.DefaultQuery("year", fmt.Sprintf("%d", year)),
 		Week:         c.DefaultQuery("week", fmt.Sprintf("%d", week)),
 		Month:        c.DefaultQuery("month", fmt.Sprintf("%d", int(time.Now().Month()))),
@@ -230,21 +244,26 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 	}
 
 	// sourceName :=
-	switch contentType {
+	switch mediaType {
 	case "application/json", "application/json-patch+json", "application/geo+json":
 		var body map[string]interface{}
 		if err := c.BindJSON(&body); err != nil {
 			log.WithError(err).Error("Error reading request object from POST body")
+			return *req, fmt.Errorf("%w: invalid JSON request body", ErrInvalidQueueRequest)
 		}
 		b, _ := json.Marshal(body)
 		// fmt.Println(string(b))
 		reqF.Body = string(b)
-		*req, _ = reqF.Save(db)
+		savedReq, err := reqF.Save(db)
+		if err != nil {
+			return *req, err
+		}
+		*req = savedReq
 		// log.WithField("New Server", s).Info("Going to create new server")
 	default:
 		//
 		log.WithField("Content-Type", contentType).Error("Unsupported content-Type")
-		return *req, errors.New(fmt.Sprintf("Unsupported Content-Type: %s", contentType))
+		return *req, fmt.Errorf("%w: unsupported Content-Type: %s", ErrInvalidQueueRequest, contentType)
 	}
 
 	// r.Source = int(GetServerIDByName(reqForm.Source))
