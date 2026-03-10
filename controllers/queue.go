@@ -3,13 +3,14 @@ package controllers
 import (
 	"errors"
 	"fmt"
+	"net/http"
+
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
-	"net/http"
 )
 
 // QueueController defines the queue request controller methods
@@ -84,19 +85,19 @@ FROM %s
 	qbuild.Fields = fields
 	qbuild.OrderBy = dbutils.OrderListToOrderBy(orderbys, requestFields, "r")
 
-	var whereClause string
-	if len(qbuild.Conditions) == 0 {
-		whereClause = " TRUE"
-	} else {
-		whereClause = fmt.Sprintf("%s", dbutils.QueryConditions(qbuild.Conditions))
+	countquery := "SELECT COUNT(*) AS count FROM requests r WHERE TRUE"
+	countArgs := []any{}
+	if len(qbuild.Conditions) > 0 {
+		whereClause, args := dbutils.QueryConditionsWithArgs(qbuild.Conditions, 1)
+		countquery = fmt.Sprintf("SELECT COUNT(*) AS count FROM requests r WHERE %s", whereClause)
+		countArgs = args
 	}
-	countquery := fmt.Sprintf("SELECT COUNT(*) AS count FROM requests r WHERE %s", whereClause)
 
 	db := c.MustGet("dbConn").(*sqlx.DB)
 	var count int64
-	err := db.Get(&count, countquery)
+	err := db.Get(&count, countquery, countArgs...)
 	if err != nil {
-		fmt.Println(">>>>>>>>>>>>>>>>>>>>>", err)
+		log.WithError(err).Error("Failed to count requests")
 		return
 	}
 
@@ -109,11 +110,12 @@ FROM %s
 	qbuild.Limit = pager.PageSize
 	qbuild.Offset = pager.FirstItem() - 1
 
-	jsonquery := fmt.Sprintf("SELECT ROW_TO_JSON(s) FROM (%s) s;", qbuild.ToSQL(shouldWePage))
+	selectSQL, selectArgs := qbuild.ToSQLWithArgs(shouldWePage, 1)
+	jsonquery := fmt.Sprintf("SELECT ROW_TO_JSON(s) FROM (%s) s;", selectSQL)
 
 	var requests []dbutils.MapAnything
 
-	err = db.Select(&requests, jsonquery)
+	err = db.Select(&requests, jsonquery, selectArgs...)
 	if err != nil {
 		log.WithError(err).Error("Failed to query request")
 	}
@@ -154,13 +156,14 @@ FROM %s
 	qbuild.Conditions = dbutils.QueryFiltersToConditions(filters, "r")
 	qbuild.Fields = fields
 
+	selectSQL, selectArgs := qbuild.ToSQLWithArgs(false, 1)
 	jsonquery := fmt.Sprintf(`
-SELECT ROW_TO_JSON(s) FROM (%s) s;`, qbuild.ToSQL(false))
+SELECT ROW_TO_JSON(s) FROM (%s) s;`, selectSQL)
 
 	db := c.MustGet("dbConn").(*sqlx.DB)
 	var request dbutils.MapAnything
 
-	err := db.Get(&request, jsonquery)
+	err := db.Get(&request, jsonquery, selectArgs...)
 	if err != nil {
 		log.WithError(err).Error("Failed to query request:" + jsonquery)
 	}
@@ -173,8 +176,8 @@ func (q *QueueController) DeleteRequest(c *gin.Context) {
 	uid := c.Param("id")
 	db := c.MustGet("dbConn").(*sqlx.DB)
 
-	query := fmt.Sprintf("DELETE FROM requests WHERE uid = '%s'", uid)
-	_, err := db.Query(query)
+	const query = "DELETE FROM requests WHERE uid = $1"
+	_, err := db.Exec(query, uid)
 	if err != nil {
 		log.WithError(err).Error("Failed to delete request:")
 		c.JSON(http.StatusConflict, gin.H{"status": "failed to delete"})

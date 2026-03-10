@@ -64,17 +64,17 @@ FROM %s
 	qbuild.Fields = fields
 	qbuild.OrderBy = dbutils.OrderListToOrderBy(orderbys, organisationUnitDBFields, "o")
 
-	var whereClause string
-	if len(qbuild.Conditions) == 0 {
-		whereClause = " TRUE"
-	} else {
-		whereClause = fmt.Sprintf("%s", dbutils.QueryConditions(qbuild.Conditions))
+	countquery := "SELECT COUNT(*) AS count FROM organisationunit o WHERE TRUE"
+	countArgs := []any{}
+	if len(qbuild.Conditions) > 0 {
+		whereClause, args := dbutils.QueryConditionsWithArgs(qbuild.Conditions, 1)
+		countquery = fmt.Sprintf("SELECT COUNT(*) AS count FROM organisationunit o WHERE %s", whereClause)
+		countArgs = args
 	}
-	countquery := fmt.Sprintf("SELECT COUNT(*) AS count FROM organisationunit o WHERE %s", whereClause)
 
 	db := c.MustGet("dbConn").(*sqlx.DB)
 	var count int64
-	err := db.Get(&count, countquery)
+	err := db.Get(&count, countquery, countArgs...)
 	if err != nil {
 		log.WithError(err).Info("Failed to get count from query")
 		return
@@ -89,11 +89,12 @@ FROM %s
 	qbuild.Limit = p.PageSize
 	qbuild.Offset = p.FirstItem() - 1
 
-	jsonquery := fmt.Sprintf(`SELECT ROW_TO_JSON(s) FROM (%s) s;`, qbuild.ToSQL(shouldWePage))
+	selectSQL, selectArgs := qbuild.ToSQLWithArgs(shouldWePage, 1)
+	jsonquery := fmt.Sprintf(`SELECT ROW_TO_JSON(s) FROM (%s) s;`, selectSQL)
 
 	var organisationUnits []dbutils.MapAnything //map[string]interface{}
 
-	err = db.Select(&organisationUnits, jsonquery)
+	err = db.Select(&organisationUnits, jsonquery, selectArgs...)
 	if err != nil {
 		log.WithError(err).Error("Failed to query organisatiounits")
 	}

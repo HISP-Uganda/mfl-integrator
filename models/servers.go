@@ -348,15 +348,15 @@ func GetServers(db *sqlx.DB, page string, pageSize string,
 	qbuild.Fields = qfields
 	qbuild.OrderBy = dbutils.OrderListToOrderBy(orderBy, serversFields, "s")
 
-	var whereClause string
-	if len(qbuild.Conditions) == 0 {
-		whereClause = " TRUE"
-	} else {
-		whereClause = fmt.Sprintf("%s", dbutils.QueryConditions(qbuild.Conditions))
+	countquery := "SELECT COUNT(*) AS count FROM servers s WHERE TRUE"
+	countArgs := []any{}
+	if len(qbuild.Conditions) > 0 {
+		whereClause, args := dbutils.QueryConditionsWithArgs(qbuild.Conditions, 1)
+		countquery = fmt.Sprintf("SELECT COUNT(*) AS count FROM servers s WHERE %s", whereClause)
+		countArgs = args
 	}
-	countquery := fmt.Sprintf("SELECT COUNT(*) AS count FROM servers s WHERE %s", whereClause)
 	var count int64
-	err := db.Get(&count, countquery)
+	err := db.Get(&count, countquery, countArgs...)
 	if err != nil {
 		return nil
 	}
@@ -364,10 +364,11 @@ func GetServers(db *sqlx.DB, page string, pageSize string,
 	qbuild.Limit = pager.PageSize
 	qbuild.Offset = pager.FirstItem() - 1
 
-	jsonquery := fmt.Sprintf("SELECT ROW_TO_JSON(s) FROM (%s) s;", qbuild.ToSQL(true))
+	selectSQL, selectArgs := qbuild.ToSQLWithArgs(true, 1)
+	jsonquery := fmt.Sprintf("SELECT ROW_TO_JSON(s) FROM (%s) s;", selectSQL)
 	var results []dbutils.MapAnything
 
-	err = db.Select(&results, jsonquery)
+	err = db.Select(&results, jsonquery, selectArgs...)
 	if err != nil {
 		log.WithError(err).Error("Failed to get query results")
 	}

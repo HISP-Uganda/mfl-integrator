@@ -26,7 +26,7 @@ type Field struct {
 type Condition struct {
 	Field    Field
 	Operator string
-	Value    string
+	Value    any
 }
 
 // Join represents a JOIN in a query
@@ -119,6 +119,33 @@ func QueryConditions(conditions []Condition) string {
 	return condStr.String()
 }
 
+// QueryConditionsWithArgs returns a SQL WHERE clause fragment plus positional args.
+func QueryConditionsWithArgs(conditions []Condition, startAt int) (string, []any) {
+	var (
+		condStr bytes.Buffer
+		args    []any
+	)
+
+	argPos := startAt
+	for idx, c := range conditions {
+		column := c.Field.Name
+		if c.Field.TablePrefix != "" {
+			column = fmt.Sprintf("%s.%s", c.Field.TablePrefix, c.Field.Name)
+		}
+
+		_, _ = fmt.Fprintf(&condStr, "%s %s $%d", column, c.Operator, argPos)
+		args = append(args, c.Value)
+		argPos++
+
+		if idx != len(conditions)-1 {
+			_, _ = fmt.Fprintf(&condStr, `
+	AND `)
+		}
+	}
+
+	return condStr.String(), args
+}
+
 // QueryJoins returns the joins that are part of our query in the QueryBuilder object
 func QueryJoins(joins []Join) string {
 	var joinStr bytes.Buffer
@@ -156,11 +183,46 @@ func (q *QueryBuilder) ToSQL(paging bool) string {
 	return ""
 }
 
+// ToSQLWithArgs returns SQL with positional placeholders and its args.
+func (q *QueryBuilder) ToSQLWithArgs(paging bool, startAt int) (string, []any) {
+	if len(q.Fields) == 0 || len(q.QueryTemplate) == 0 {
+		return "", nil
+	}
+
+	query := fmt.Sprintf(
+		q.QueryTemplate,
+		FieldsToString(q.Fields),
+		q.Table.Name+" "+q.Table.Alias,
+		QueryJoins(q.Joins),
+	)
+
+	args := make([]any, 0, len(q.Conditions)+2)
+	argPos := startAt
+
+	if len(q.Conditions) > 0 {
+		whereClause, whereArgs := QueryConditionsWithArgs(q.Conditions, argPos)
+		query += "WHERE " + whereClause
+		args = append(args, whereArgs...)
+		argPos += len(whereArgs)
+	}
+
+	if len(q.OrderBy) > 0 {
+		query += " ORDER BY " + OrderByToString(q.OrderBy)
+	}
+
+	if paging {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d ", argPos, argPos+1)
+		args = append(args, q.Limit, q.Offset)
+	}
+
+	return query, args
+}
+
 // QueryFiltersToConditions returns a list of conditions with field, operator and value
 func QueryFiltersToConditions(filters []string, tableAlias string) []Condition {
 	conditions := []Condition{}
 	for _, f := range filters {
-		cond := strings.Split(f, ":")
+		cond := strings.SplitN(f, ":", 3)
 		if len(cond) == 3 {
 			var op string
 			switch strings.ToUpper(cond[1]) {
@@ -209,7 +271,7 @@ func OrderListToOrderBy(order []string, tableFields []string, tableAlias string)
 	return orderBys
 }
 
-//QueryLimitClause returns the sql string for the LIMIT clause
+// QueryLimitClause returns the sql string for the LIMIT clause
 func (q *QueryBuilder) QueryLimitClause(paging bool) string {
 	if !paging {
 		return ""
