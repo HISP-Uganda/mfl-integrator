@@ -722,6 +722,15 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 
 func FetchFacilities2(mflId, batchId string) {
 	dbConn := db.GetDB()
+	districtLabel := mflId
+	if strings.TrimSpace(districtLabel) == "" {
+		districtLabel = "all"
+	}
+	syncFields := log.Fields{
+		"batch_id": batchId,
+		"district": districtLabel,
+		"job":      "facility_sync",
+	}
 
 	// 1) Sanity check: ensure levels above facility exist
 	var upperLevels int64
@@ -730,11 +739,11 @@ func FetchFacilities2(mflId, batchId string) {
 		config.MFLIntegratorConf.API.DHIS2FacilityLevel,
 	)
 	if err != nil {
-		log.WithError(err).Info("Error reading records on level above facility")
+		log.WithError(err).WithFields(syncFields).Info("Error reading records on level above facility")
 		return
 	}
 	if upperLevels == 0 {
-		log.Warn("Cannot Synchronize Facilities when hierarchy levels above facility are missing")
+		log.WithFields(syncFields).Warn("Cannot synchronize facilities because hierarchy levels above facility are missing")
 		return
 	}
 
@@ -745,7 +754,7 @@ func FetchFacilities2(mflId, batchId string) {
 		config.MFLIntegratorConf.API.DHIS2FacilityLevel,
 	)
 	if err != nil {
-		log.WithError(err).Info("Error getting the count of health facilities")
+		log.WithError(err).WithFields(syncFields).Info("Error getting the count of health facilities")
 		return
 	}
 
@@ -785,11 +794,21 @@ func FetchFacilities2(mflId, batchId string) {
 	}
 
 	startTime := time.Now()
-	log.WithField("StartTime", startTime.Format("2006-01-02 15:04:05")).Info("Starting to fetch facilities")
+	log.WithFields(log.Fields{
+		"start_time":     startTime.Format(time.RFC3339),
+		"existing_count": facilityCount,
+		"updated_since":  q.UpdatedSince,
+		"page_size":      q.PageSize,
+		"facility_level": q.Level,
+	}).WithFields(syncFields).Info("Starting facility sync")
 
 	numberCreated := 0
 	numberUpdated := 0
 	numberIgnored := 0
+	missingParent := 0
+	payloadErrors := 0
+	stateErrors := 0
+	queueErrors := 0
 	parentOrgUnitCache := make(map[string]models.OrganisationUnit)
 	usedUIDCache := make(map[string]string)
 	orgUnitGroupUIDCache := make(map[string]string)
@@ -809,14 +828,17 @@ func FetchFacilities2(mflId, batchId string) {
 
 		facilityMap, facilityJSON, err := buildFacilityPayload(facility)
 		if err != nil {
-			log.WithError(err).Info("Failed to build facility payload")
+			payloadErrors++
+			log.WithError(err).WithFields(syncFields).WithField("facility_uid", facility.UID).Info("Failed to build facility payload")
 			return nil
 		}
 		log.WithField("FacilityJson", string(facilityJSON)).Debug("Facility Object")
 
 		if len(facility.Path) < 15 {
+			missingParent++
 			log.WithFields(log.Fields{
-				"UID": facility.UID, "Name": facility.Name, "Path": facility.Path}).Warn("Found no Parent for facility")
+				"facility_uid": facility.UID, "facility_name": facility.Name, "path": facility.Path,
+			}).WithFields(syncFields).Warn("Found no parent for facility")
 			ouFailure := models.OrgUnitFailure{
 				UID:         utils.GetUID(),
 				FacilityUID: facility.UID,
@@ -831,7 +853,8 @@ func FetchFacilities2(mflId, batchId string) {
 
 		syncState, existsInDB, err := models.GetOrganisationUnitSyncState(facility.UID)
 		if err != nil {
-			log.WithError(err).WithField("UID", facility.UID).Error("Failed to load facility sync state")
+			stateErrors++
+			log.WithError(err).WithField("facility_uid", facility.UID).WithFields(syncFields).Error("Failed to load facility sync state")
 			return nil
 		}
 
@@ -895,9 +918,14 @@ func FetchFacilities2(mflId, batchId string) {
 			if facility.ValidateUID() && len(facility.Path) > 15 {
 				fRequest, err := reqF.Save(dbConn)
 				if err != nil {
-					log.WithError(err).Error("Failed to queue facility creation")
+					queueErrors++
+					log.WithError(err).WithFields(syncFields).WithField("facility_uid", facility.UID).Error("Failed to queue facility creation")
 				}
-				log.WithField("Facility", fRequest.UID()).Info("Queued Facility for addition")
+				log.WithFields(log.Fields{
+					"facility_uid": facility.UID,
+					"queued_uid":   fRequest.UID(),
+					"action":       "create",
+				}).WithFields(syncFields).Info("Queued facility request")
 
 				ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
 				requestForms := MakeOrgUnitGroupsAdditionRequests(
@@ -915,11 +943,12 @@ func FetchFacilities2(mflId, batchId string) {
 				}
 				err = models.SaveRequestFormsBatch(dbConn, batchRequestForms)
 				if err != nil {
+					queueErrors++
 					log.WithError(err).WithField("OU", facilityMetadata.UID).Error(
 						"Failed to batch queue requests to add OU to groups",
 					)
 				} else if len(batchRequestForms) > 0 {
-					log.WithFields(log.Fields{"OU": facilityMetadata.UID, "Count": len(batchRequestForms)}).Info(
+					log.WithFields(log.Fields{"OU": facilityMetadata.UID, "Count": len(batchRequestForms)}).WithFields(syncFields).Info(
 						"Queued requests to add facility to groups",
 					)
 				}
@@ -938,7 +967,8 @@ func FetchFacilities2(mflId, batchId string) {
 		fj["parent"] = facility.ParentRef()
 		newMatchedOld, diffMap, err := models.CompareDefinition(fj, syncState.LatestRevision)
 		if err != nil {
-			log.WithError(err).Info("Failed to make comparison between old and new facility JSON objects")
+			payloadErrors++
+			log.WithError(err).WithFields(syncFields).WithField("facility_uid", facility.UID).Info("Failed to compare facility definitions")
 		}
 
 		if newMatchedOld {
@@ -982,6 +1012,7 @@ func FetchFacilities2(mflId, batchId string) {
 			reqF.BatchID = batchId
 			_, err := reqF.Save(dbConn)
 			if err != nil {
+				queueErrors++
 				log.WithError(err).WithFields(log.Fields{"OU": reqF.UID}).Error(
 					"Failed to queue - update request for OU",
 				)
@@ -1008,11 +1039,12 @@ func FetchFacilities2(mflId, batchId string) {
 		}
 		err = models.SaveRequestFormsBatch(dbConn, batchRequestForms)
 		if err != nil {
+			queueErrors++
 			log.WithError(err).WithField("OU", facilityMetadata.UID).Error(
 				"Updating OU: Failed to batch queue requests to add OU to groups",
 			)
 		} else if len(batchRequestForms) > 0 {
-			log.WithFields(log.Fields{"OU": facilityMetadata.UID, "Count": len(batchRequestForms)}).Info(
+			log.WithFields(log.Fields{"OU": facilityMetadata.UID, "Count": len(batchRequestForms)}).WithFields(syncFields).Info(
 				"Updating OU: Queued requests to add facility to groups",
 			)
 		}
@@ -1021,7 +1053,7 @@ func FetchFacilities2(mflId, batchId string) {
 		return nil
 	})
 	if err != nil {
-		log.WithError(err).Info("Sync S001: Failed to fetch facilities from MFL (new client)")
+		log.WithError(err).WithFields(syncFields).Info("Failed to fetch facilities from MFL")
 		return
 	}
 
@@ -1040,10 +1072,16 @@ func FetchFacilities2(mflId, batchId string) {
 	syncLog.LogSync()
 
 	log.WithFields(log.Fields{
-		"EndTime":       endTime,
-		"NumberCreated": numberCreated,
-		"NumberUpdated": numberUpdated,
-	}).Info("Stopped processing fetched facilities")
+		"end_time":       endTime.Format(time.RFC3339),
+		"duration_ms":    endTime.Sub(startTime).Milliseconds(),
+		"number_created": numberCreated,
+		"number_updated": numberUpdated,
+		"number_ignored": numberIgnored,
+		"missing_parent": missingParent,
+		"payload_errors": payloadErrors,
+		"state_errors":   stateErrors,
+		"queue_errors":   queueErrors,
+	}).WithFields(syncFields).Info("Finished facility sync")
 }
 
 const districtSQL = `SELECT mfluid FROM organisationunit WHERE hierarchylevel = 
@@ -1051,11 +1089,12 @@ const districtSQL = `SELECT mfluid FROM organisationunit WHERE hierarchylevel =
 
 // FetchFacilitiesByDistrict fetches Facilities from MFL by district - if we don't get mflids then fetch everything
 func FetchFacilitiesByDistrict() {
-	log.Info("Going to Fetch Facilities By District")
+	start := time.Now()
+	log.WithField("job", "facility_sync").Info("Starting facility sync by district")
 	batchId := utils.GetUID()
 	rows, err := db.GetDB().Queryx(districtSQL, config.MFLIntegratorConf.API.DHIS2DistrictLevelName)
 	if err != nil {
-		log.WithError(err).Info("Failed to get district mfluids from database")
+		log.WithError(err).WithFields(log.Fields{"job": "facility_sync", "batch_id": batchId}).Info("Failed to get district mfluids from database")
 		FetchFacilities2("", batchId)
 		return
 	}
@@ -1072,11 +1111,22 @@ func FetchFacilitiesByDistrict() {
 	}
 	_ = rows.Close()
 
+	log.WithFields(log.Fields{
+		"job":            "facility_sync",
+		"batch_id":       batchId,
+		"district_count": len(districts),
+	}).Info("Loaded districts for facility sync")
+
 	for _, district := range districts {
-		log.WithField("District", district).Info("Syncing Facilities")
+		log.WithFields(log.Fields{"job": "facility_sync", "batch_id": batchId, "district": district}).Info("Syncing facilities for district")
 		FetchFacilities2(district, batchId)
 	}
-	log.Info("Finished Fetching Facilities By District")
+	log.WithFields(log.Fields{
+		"job":            "facility_sync",
+		"batch_id":       batchId,
+		"district_count": len(districts),
+		"duration_ms":    time.Since(start).Milliseconds(),
+	}).Info("Finished facility sync by district")
 }
 
 // GetExtensions gets extensions within an entry in a FHIR bundle

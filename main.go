@@ -16,6 +16,7 @@ import (
 	"github.com/HISP-Uganda/mfl-integrator/controllers"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
+	"github.com/HISP-Uganda/mfl-integrator/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/go-co-op/gocron"
 	"github.com/samply/golang-fhir-models/fhir-models/fhir"
@@ -49,6 +50,20 @@ var splash = `
 ┃┃┃┣╸ ┃      ┃ ┃ ┃    ┃┃┣━┫┃┗━┓┏━┛
 ╹ ╹╹  ┗━╸    ╹ ┗━┛   ╺┻┛╹ ╹╹┗━┛┗━
 `
+
+func runObservedJob(jobName string, fn func()) {
+	runID := utils.GetUID()
+	start := time.Now()
+	entry := log.WithFields(log.Fields{
+		"job":    jobName,
+		"run_id": runID,
+	})
+	entry.Info("Job started")
+	defer func() {
+		entry.WithField("duration_ms", time.Since(start).Milliseconds()).Info("Job finished")
+	}()
+	fn()
+}
 
 func main() {
 	fmt.Printf(splash)
@@ -101,7 +116,9 @@ func main() {
 		if !*config.MFLSyncScheduleOFF {
 			log.WithFields(log.Fields{"SyncCronExpression": config.MFLIntegratorConf.API.SyncCronExpression}).Info(
 				"Facility Synchronisation Cron Expression")
-			_, err := s.Cron(config.MFLIntegratorConf.API.SyncCronExpression).SingletonMode().Do(FetchFacilitiesByDistrict)
+			_, err := s.Cron(config.MFLIntegratorConf.API.SyncCronExpression).SingletonMode().Do(func() {
+				runObservedJob("facility_sync", FetchFacilitiesByDistrict)
+			})
 			// _, err := s.CronWithSeconds("* * * * * *").Do(task)
 			if err != nil {
 				log.WithError(err).Error("Error scheduling facility sync task:")
@@ -114,7 +131,9 @@ func main() {
 			"Request Retry Cron Expression")
 		if !*config.SkipRequestProcessing {
 			_, err = s.Cron(config.MFLIntegratorConf.API.RetryCronExpression).SingletonMode().Do(func() {
-				RetryIncompleteRequests(ctx)
+				runObservedJob("retry_incomplete_requests", func() {
+					RetryIncompleteRequests(ctx)
+				})
 			})
 			if err != nil {
 				log.WithError(err).Error("Error scheduling incomplete request retry task:")
@@ -148,9 +167,7 @@ func main() {
 
 		// fetch facilities after initial run, just use a scheduled job.
 		if !*config.MFLSyncOFF {
-			log.Info("Fetching facilities from MFL started...")
-			FetchFacilitiesByDistrict()
-			log.Info("Fetching facilities from MFL finished...")
+			runObservedJob("initial_facility_sync", FetchFacilitiesByDistrict)
 		} else {
 			// log fetching facilities from MFL disabled
 			log.Warn(".::::..Fetching facilities from MFL disabled..::::..")
