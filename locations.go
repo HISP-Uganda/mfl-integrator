@@ -790,6 +790,7 @@ func FetchFacilities2(mflId, batchId string) {
 	numberCreated := 0
 	numberUpdated := 0
 	numberIgnored := 0
+	parentOrgUnitCache := make(map[string]models.OrganisationUnit)
 
 	// 5) Stream from the new API (no huge memory usage)
 	ctx := context.Background()
@@ -802,7 +803,7 @@ func FetchFacilities2(mflId, batchId string) {
 		//
 		// If you still need FHIR-style mapping, do it inside this function.
 
-		facility := GetOrgUnitFromFacility(f)
+		facility := GetOrgUnitFromFacility(f, parentOrgUnitCache)
 
 		facilityJSON, err := json.Marshal(facility)
 		if err != nil {
@@ -1254,7 +1255,7 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 
 // GetOrgUnitFromFacility converts the new Facilities API "Facility" payload into your DHIS2 OrganisationUnit model.
 // This replaces GetOrgUnitFromFHIRLocation, where LocationEntry ~= Facility now.
-func GetOrgUnitFromFacility(f clients.Facility) models.OrganisationUnit {
+func GetOrgUnitFromFacility(f clients.Facility, parentOrgUnitCache map[string]models.OrganisationUnit) models.OrganisationUnit {
 	name := f.Name
 	if strings.TrimSpace(name) == "" {
 		name = f.ShortName
@@ -1286,8 +1287,13 @@ func GetOrgUnitFromFacility(f clients.Facility) models.OrganisationUnit {
 	}
 	parentOrgUnit := models.OrganisationUnit{}
 	if parentKey != "" {
-		// let's use MFLUD
-		parentOrgUnit = models.GetOrgUnitByMFLUID(parentKey)
+		if cachedParent, ok := parentOrgUnitCache[parentKey]; ok {
+			parentOrgUnit = cachedParent
+		} else {
+			// let's use MFLUD
+			parentOrgUnit = models.GetOrgUnitByMFLUID(parentKey)
+			parentOrgUnitCache[parentKey] = parentOrgUnit
+		}
 	}
 
 	// Address

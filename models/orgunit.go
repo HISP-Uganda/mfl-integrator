@@ -684,17 +684,21 @@ func (r *OrgUnitRevision) GetCurrentVersion() int64 {
 // NewOrgUnitRevision creates a new revision for facility in the db and increments version number
 func (r *OrgUnitRevision) NewOrgUnitRevision() {
 	dbConn := db.GetDB()
-	r.Revision = r.GetCurrentVersion() + 1
-	_, err := dbConn.NamedExec(`INSERT INTO orgunitrevision(uid, organisationunit_id, is_active, 
-                            revision, definition, district) VALUES (:uid, :organisationunit_id, TRUE, :revision, :definition, :district)`, r)
+	_, err := dbConn.NamedExec(`WITH deactivate AS (
+			UPDATE orgunitrevision
+			SET is_active = FALSE
+			WHERE organisationunit_id = :organisationunit_id AND is_active = TRUE
+		),
+		next_revision AS (
+			SELECT COALESCE(MAX(revision), 0) + 1 AS revision
+			FROM orgunitrevision
+			WHERE organisationunit_id = :organisationunit_id
+		)
+		INSERT INTO orgunitrevision(uid, organisationunit_id, is_active, revision, definition, district)
+		SELECT :uid, :organisationunit_id, TRUE, next_revision.revision, :definition, :district
+		FROM next_revision`, r)
 	if err != nil {
-		log.WithError(err).Info("Failed to Log Failure")
-		return
-	}
-	_, err = dbConn.NamedExec(`UPDATE orgunitrevision SET is_active= False 
-        WHERE organisationunit_id = :organisationunit_id AND uid <> :uid`, r)
-	if err != nil {
-		log.WithError(err).Error("Failed to deactivate previous revisions for facility")
+		log.WithError(err).Error("Failed to create organisation unit revision")
 	}
 }
 
