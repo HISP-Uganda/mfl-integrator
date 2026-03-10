@@ -791,6 +791,8 @@ func FetchFacilities2(mflId, batchId string) {
 	numberUpdated := 0
 	numberIgnored := 0
 	parentOrgUnitCache := make(map[string]models.OrganisationUnit)
+	usedUIDCache := make(map[string]string)
+	orgUnitGroupUIDCache := make(map[string]string)
 
 	// 5) Stream from the new API (no huge memory usage)
 	ctx := context.Background()
@@ -803,7 +805,7 @@ func FetchFacilities2(mflId, batchId string) {
 		//
 		// If you still need FHIR-style mapping, do it inside this function.
 
-		facility := GetOrgUnitFromFacility(f, parentOrgUnitCache)
+		facility := GetOrgUnitFromFacility(f, parentOrgUnitCache, usedUIDCache, orgUnitGroupUIDCache)
 
 		facilityJSON, err := json.Marshal(facility)
 		if err != nil {
@@ -1255,7 +1257,12 @@ func GetOrgUnitFromFHIRLocation(location LocationEntry) models.OrganisationUnit 
 
 // GetOrgUnitFromFacility converts the new Facilities API "Facility" payload into your DHIS2 OrganisationUnit model.
 // This replaces GetOrgUnitFromFHIRLocation, where LocationEntry ~= Facility now.
-func GetOrgUnitFromFacility(f clients.Facility, parentOrgUnitCache map[string]models.OrganisationUnit) models.OrganisationUnit {
+func GetOrgUnitFromFacility(
+	f clients.Facility,
+	parentOrgUnitCache map[string]models.OrganisationUnit,
+	usedUIDCache map[string]string,
+	orgUnitGroupUIDCache map[string]string,
+) models.OrganisationUnit {
 	name := f.Name
 	if strings.TrimSpace(name) == "" {
 		name = f.ShortName
@@ -1269,13 +1276,18 @@ func GetOrgUnitFromFacility(f clients.Facility, parentOrgUnitCache map[string]mo
 
 	// If historical_id is missing, fall back safely (keep behavior similar to your old code)
 	if historicalID == "" {
-		uid := models.GetUIDByMFLUID(mflUID)
+		uid, ok := usedUIDCache[mflUID]
+		if !ok {
+			uid = models.GetUIDByMFLUID(mflUID)
+			usedUIDCache[mflUID] = uid
+		}
 		if len(uid) == 11 {
 			historicalID = uid
 		} else {
 			historicalID = utils.GetUID()
 			ou := models.UsedUID{UID: historicalID, MFLUID: mflUID}
 			ou.NewUsedUID()
+			usedUIDCache[mflUID] = historicalID
 		}
 		log.WithFields(log.Fields{"Facility": name, "UID": historicalID}).Debug("No historical_id found for facility")
 	}
@@ -1410,7 +1422,11 @@ func GetOrgUnitFromFacility(f clients.Facility, parentOrgUnitCache map[string]mo
 
 	// OrgUnitGroups from level-of-care
 	if levelOfCare != "" {
-		ouUID := models.GetOuGroupUIDByName(levelOfCare)
+		ouUID, ok := orgUnitGroupUIDCache[levelOfCare]
+		if !ok {
+			ouUID = models.GetOuGroupUIDByName(levelOfCare)
+			orgUnitGroupUIDCache[levelOfCare] = ouUID
+		}
 		facility.OrgUnitGroups = []models.OrgUnitGroup{
 			{Name: levelOfCare, UID: ouUID, ID: ouUID},
 		}
