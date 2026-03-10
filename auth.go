@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/base64"
+	"net/http"
+	"strings"
+
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/gin-gonic/gin"
-	"strings"
 )
 
 func BasicAuth() gin.HandlerFunc {
@@ -14,21 +16,29 @@ func BasicAuth() gin.HandlerFunc {
 		c.Set("dbConn", db.GetDB())
 		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
 
-		if len(auth) != 2 || auth[0] != "Basic" {
-			RespondWithError(401, "Unauthorized", c)
+		if len(auth) != 2 || !strings.EqualFold(auth[0], "Basic") {
+			respondWithBasicAuthChallenge(c)
 			return
 		}
-		payload, _ := base64.StdEncoding.DecodeString(auth[1])
+		payload, err := base64.StdEncoding.DecodeString(auth[1])
+		if err != nil {
+			respondWithBasicAuthChallenge(c)
+			return
+		}
 		pair := strings.SplitN(string(payload), ":", 2)
 
 		if len(pair) != 2 || !AuthenticateUser(pair[0], pair[1]) {
-			RespondWithError(401, "Unauthorized", c)
-			// c.Writer.Header().Set("WWW-Authenticate", "Basic realm=Restricted")
+			respondWithBasicAuthChallenge(c)
 			return
 		}
 
 		c.Next()
 	}
+}
+
+func respondWithBasicAuthChallenge(c *gin.Context) {
+	c.Header("WWW-Authenticate", `Basic realm="mfl-integrator"`)
+	RespondWithError(http.StatusUnauthorized, "Unauthorized", c)
 }
 
 func AuthenticateUser(username, password string) bool {

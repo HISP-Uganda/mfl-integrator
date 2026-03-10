@@ -205,18 +205,11 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 	// reqForm := RequestForm{}
 	req := &Request{}
 	// r := &req.r
-	src := c.DefaultQuery("source", "localhost")
-	dest := c.Query("destination")
+	src := strings.TrimSpace(c.DefaultQuery("source", "localhost"))
+	dest := strings.TrimSpace(c.Query("destination"))
 	if strings.TrimSpace(dest) == "" {
 		return *req, fmt.Errorf("%w: destination query parameter is required", ErrInvalidQueueRequest)
 	}
-	// source := ServerMapByName[src]
-	// destination, ok := ServerMapByName[dest]
-
-	//if !ok {
-	//	return *req, errors.New("destination is server not defined")
-	//
-	//}
 	contentType := c.Request.Header.Get("Content-Type")
 	mediaType := contentType
 	if mediaType != "" {
@@ -241,6 +234,10 @@ func NewRequestFromPOST(c *gin.Context, db *sqlx.DB) (Request, error) {
 		District:     c.DefaultQuery("district", ""),
 		CCServers:    strings.Split(c.DefaultQuery("cc_servers", ""), ","),
 		// Body:      string(reqBody), ObjectType: "ORGANISATION_UNIT", ReportType: "OU",
+	}
+	reqF.CCServers = normalizeServerNames(reqF.CCServers)
+	if err := validateQueueRequestForm(&reqF); err != nil {
+		return *req, err
 	}
 
 	// sourceName :=
@@ -374,15 +371,21 @@ func buildRequestFromForm(rq *RequestForm) (Request, error) {
 	r := &req.r
 
 	r.DependsOn = rq.DependsOn
-	source := ServerMapByName[rq.Source]
+	source, ok := GetServerFromRegistryByName(rq.Source)
+	if !ok {
+		return *req, fmt.Errorf("source server %q not found", rq.Source)
+	}
 	r.Source = int(source.ID())
-	destination := ServerMapByName[rq.Destination]
+	destination, ok := GetServerFromRegistryByName(rq.Destination)
+	if !ok {
+		return *req, fmt.Errorf("destination server %q not found", rq.Destination)
+	}
 	r.Destination = int(destination.ID())
 	if r.Source == 0 {
-		return *req, errors.New(fmt.Sprintf("Source server %s not found!", rq.Source))
+		return *req, fmt.Errorf("source server %q not found", rq.Source)
 	}
 	if r.Destination == 0 {
-		return *req, errors.New(fmt.Sprintf("Destination server %s not found!", rq.Destination))
+		return *req, fmt.Errorf("destination server %q not found", rq.Destination)
 
 	}
 
@@ -415,6 +418,48 @@ func buildRequestFromForm(rq *RequestForm) (Request, error) {
 	r.District = rq.District
 	r.Body = rq.Body
 	return *req, nil
+}
+
+func normalizeServerNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func validateQueueRequestForm(rq *RequestForm) error {
+	if strings.TrimSpace(rq.Source) == "" {
+		return fmt.Errorf("%w: source query parameter is required", ErrInvalidQueueRequest)
+	}
+	if strings.TrimSpace(rq.Destination) == "" {
+		return fmt.Errorf("%w: destination query parameter is required", ErrInvalidQueueRequest)
+	}
+	if strings.TrimSpace(rq.Body) == "" {
+		return fmt.Errorf("%w: request body must not be empty", ErrInvalidQueueRequest)
+	}
+
+	source, ok := GetServerFromRegistryByName(rq.Source)
+	if !ok || source.ID() == 0 {
+		return fmt.Errorf("%w: unknown source server %q", ErrInvalidQueueRequest, rq.Source)
+	}
+	destination, ok := GetServerFromRegistryByName(rq.Destination)
+	if !ok || destination.ID() == 0 {
+		return fmt.Errorf("%w: unknown destination server %q", ErrInvalidQueueRequest, rq.Destination)
+	}
+
+	for _, name := range rq.CCServers {
+		srv, ok := GetServerFromRegistryByName(name)
+		if !ok || srv.ID() == 0 {
+			return fmt.Errorf("%w: unknown cc server %q", ErrInvalidQueueRequest, name)
+		}
+	}
+
+	return nil
 }
 
 func (rq *RequestForm) Save(db *sqlx.DB) (Request, error) {
