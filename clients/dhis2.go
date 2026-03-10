@@ -2,10 +2,8 @@ package clients
 
 import (
 	"errors"
-	"strings"
-
-	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 func GetDHIS2BaseURL(url string) (string, error) {
@@ -17,18 +15,13 @@ func GetDHIS2BaseURL(url string) (string, error) {
 }
 
 func (s *Dhis2Server) NewDhis2Client() (*Client, error) {
-	client := resty.New()
 	baseUrl, err := GetDHIS2BaseURL(s.BaseUrl)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"URL": s.BaseUrl, "Error": err}).Error("Failed to get base URL from URL")
 		return nil, err
 	}
-	client.SetBaseURL(baseUrl + "/api")
-	client.SetHeaders(map[string]string{
-		"User-Agent": "MFL-Integrator",
-	})
-	client.SetDisableWarn(true)
+	client := NewStandardRestyClient(baseUrl + "/api")
 	switch s.AuthMethod {
 	case "Basic":
 		client.SetBasicAuth(s.Username, s.Password)

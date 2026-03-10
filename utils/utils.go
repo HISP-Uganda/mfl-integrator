@@ -2,15 +2,10 @@ package utils
 
 import (
 	"bytes"
-	"crypto/tls"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/HISP-Uganda/mfl-integrator/config"
-	"github.com/HISP-Uganda/mfl-integrator/db"
-	jsonpatch "github.com/evanphx/json-patch"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"math"
 	"math/rand"
@@ -20,6 +15,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/HISP-Uganda/mfl-integrator/clients"
+	"github.com/HISP-Uganda/mfl-integrator/config"
+	"github.com/HISP-Uganda/mfl-integrator/db"
+	jsonpatch "github.com/evanphx/json-patch"
+	log "github.com/sirupsen/logrus"
 )
 
 func PatchJSONObject(originalJSON, patchJSON []byte) []byte {
@@ -92,36 +93,19 @@ func GetUID() string {
 
 func GetWithToken(
 	baseUrl string, authToken string) ([]byte, error) {
-
-	req, err := http.NewRequest("GET", baseUrl, nil)
+	resp, err := clients.DoRequest(
+		context.Background(),
+		http.MethodGet,
+		baseUrl,
+		"application/json",
+		nil,
+		clients.AuthConfig{Token: authToken, TokenScheme: "ApiToken"},
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Add token authentication
-	token := "ApiToken " + authToken
-	req.Header.Set("Authorization", token)
-
-	// Create custom transport with TLS settings
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return nil, err
-	}
-	_ = resp.Body.Close()
-	return body, nil
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
 }
 
 func PostWithToken(
@@ -133,70 +117,36 @@ func PostWithToken(
 		log.WithError(err).Info("XXXXX ERROR")
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", baseUrl, bytes.NewReader(requestBody))
+	resp, err := clients.DoRequest(
+		context.Background(),
+		http.MethodPost,
+		baseUrl,
+		"application/json",
+		bytes.NewReader(requestBody),
+		clients.AuthConfig{Token: authToken, TokenScheme: "ApiToken"},
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Add token authentication
-	token := "ApiToken " + authToken
-	req.Header.Set("Authorization", token)
-
-	// Create custom transport with TLS settings
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return nil, err
-	}
-	_ = resp.Body.Close()
-	return body, nil
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
 }
 
 func GetWithBasicAuth(
 	baseUrl string, username, password string) ([]byte, error) {
-
-	req, err := http.NewRequest("GET", baseUrl, nil)
+	resp, err := clients.DoRequest(
+		context.Background(),
+		http.MethodGet,
+		baseUrl,
+		"application/json",
+		nil,
+		clients.AuthConfig{Username: username, Password: password},
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Add basic authentication
-	auth := username + ":" + password
-	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-	req.Header.Set("Authorization", basicAuth)
-
-	// Create custom transport with TLS settings
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return nil, err
-	}
-	_ = resp.Body.Close()
-	return body, nil
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
 }
 
 func PostWithBasicAuth(
@@ -208,78 +158,39 @@ func PostWithBasicAuth(
 		log.WithError(err).WithFields(log.Fields{"Data": fmt.Sprintf("%v", data)}).Info("XXXXX ERROR")
 		return nil, err
 	}
-	req, err := http.NewRequest("POST", baseUrl, bytes.NewBuffer(requestBody))
+	resp, err := clients.DoRequest(
+		context.Background(),
+		http.MethodPost,
+		baseUrl,
+		"application/json",
+		bytes.NewBuffer(requestBody),
+		clients.AuthConfig{Username: username, Password: password},
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Add basic authentication
-	auth := username + ":" + password
-	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-	req.Header.Set("Authorization", basicAuth)
-
-	// Create custom transport with TLS settings
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return nil, err
-	}
-	_ = resp.Body.Close()
-	return body, nil
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
 }
 
 func GetRequest(
 	baseUrl string) ([]byte, error) {
-
-	req, err := http.NewRequest("GET", baseUrl, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Add basic authentication
-	auth := config.MFLIntegratorConf.API.MFLUser + ":" + config.MFLIntegratorConf.API.MFLPassword
-	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-	req.Header.Set("Authorization", basicAuth)
-
-	// Create custom transport with TLS settings
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			// Set any necessary TLS settings here
-			// For example, to disable certificate validation:
-			InsecureSkipVerify: true,
+	resp, err := clients.DoRequest(
+		context.Background(),
+		http.MethodGet,
+		baseUrl,
+		"application/json",
+		nil,
+		clients.AuthConfig{
+			Username: config.MFLIntegratorConf.API.MFLUser,
+			Password: config.MFLIntegratorConf.API.MFLPassword,
 		},
-	}
-
-	client := &http.Client{
-		Transport: tr,
-	}
-
-	resp, err := client.Do(req)
+	)
 	if err != nil {
 		return nil, err
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return nil, err
-	}
-
-	_ = resp.Body.Close()
-	return body, nil
+	defer func() { _ = resp.Body.Close() }()
+	return io.ReadAll(resp.Body)
 }
 
 // SliceContains checks if a string is present in a slice

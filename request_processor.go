@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/HISP-Uganda/mfl-integrator/clients"
 	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/models"
@@ -24,9 +24,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var outboundHTTPClient = &http.Client{
-	Timeout: 60 * time.Second,
-}
+var outboundHTTPClient = clients.NewStandardHTTPClient()
 
 // ServerStatus is the status object within each request to
 // track status for the CC servers
@@ -393,30 +391,19 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 	if len(r.URLSurffix) > 1 {
 		destURL += r.URLSurffix
 	}
-	req, err := http.NewRequest(destination.HTTPMethod(), destURL, bytes.NewReader(marshalled))
+	req, err := http.NewRequestWithContext(context.Background(), destination.HTTPMethod(), destURL, bytes.NewReader(marshalled))
 	if err != nil {
 		return nil, err
 	}
 
+	req.Header.Set("Content-Type", r.ContentType)
+	req.Header.Set("User-Agent", clients.DefaultUserAgent)
 	switch destination.AuthMethod() {
 	case "Token":
-		// Add API token
-		tokenAuth := "ApiToken " + destination.AuthToken()
-		req.Header.Set("Authorization", tokenAuth)
+		clients.ApplyAuth(req, clients.AuthConfig{Token: destination.AuthToken(), TokenScheme: "ApiToken"})
 	case "Basic", "Basic Auth":
-		auth := destination.Username() + ":" + destination.Password()
-		basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-		req.Header.Set("Authorization", basicAuth)
-
-	default: // Basic Auth
-		// Add basic authentication
-		// auth := destination.Username() + ":" + destination.Password()
-		// basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-		// req.Header.Set("Authorization", basicAuth)
-
+		clients.ApplyAuth(req, clients.AuthConfig{Username: destination.Username(), Password: destination.Password()})
 	}
-
-	req.Header.Set("Content-Type", r.ContentType)
 	resp, err := outboundHTTPClient.Do(req)
 	if err != nil {
 		return nil, err

@@ -3,7 +3,6 @@ package clients
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -84,25 +83,9 @@ type Option func(*Client)
 func NewMFLApi(baseURL string, opts ...Option) *Client {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 
-	r := resty.New().
-		SetBaseURL(base).
-		SetHeader("Accept", "application/json").
-		SetTimeout(30 * time.Second).
-		SetRetryCount(2).
-		SetRetryWaitTime(500 * time.Millisecond).
-		SetRetryMaxWaitTime(3 * time.Second).
-		// Retry on transient errors (network errors, 429, 5xx)
-		AddRetryCondition(func(resp *resty.Response, err error) bool {
-			if err != nil {
-				return true
-			}
-			code := resp.StatusCode()
-			return code == http.StatusTooManyRequests || code >= 500
-		})
-
 	c := &Client{
 		BaseURL:    base,
-		RestClient: r,
+		RestClient: NewStandardRestyClient(base),
 	}
 
 	for _, o := range opts {
