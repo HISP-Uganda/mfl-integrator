@@ -812,7 +812,7 @@ func FetchFacilities2(mflId, batchId string) {
 			log.WithError(err).Info("Failed to build facility payload")
 			return nil
 		}
-		log.WithField("FacilityJson", string(facilityJSON)).Info("Facility Object")
+		log.WithField("FacilityJson", string(facilityJSON)).Debug("Facility Object")
 
 		if len(facility.Path) < 15 {
 			log.WithFields(log.Fields{
@@ -947,7 +947,7 @@ func FetchFacilities2(mflId, batchId string) {
 				"ValidUID": facility.ValidateUID(),
 				"Parent":   facility.ParentID,
 				"Diff":     diffMap,
-			}).Info("========= Facility has no changes =======")
+			}).Debug("========= Facility has no changes =======")
 			numberIgnored++
 			return nil
 		}
@@ -964,7 +964,7 @@ func FetchFacilities2(mflId, batchId string) {
 			"Diff":             diffMap,
 			"parent":           facility.ParentID,
 			"MetadataFromDiff": metadataPayloadFromDiff,
-		}).Info("::::::::: Facility had some changes :::::::::")
+		}).Debug("::::::::: Facility had some changes :::::::::")
 
 		// revision
 		facilityRevision := models.OrgUnitRevision{

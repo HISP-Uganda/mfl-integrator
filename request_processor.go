@@ -38,6 +38,70 @@ type ServerStatus struct {
 	Errors     string               `json:"errors"`
 }
 
+func getCCServerStatus(statuses dbutils.MapAnything, serverID int64) ServerStatus {
+	status := ServerStatus{}
+	if statuses == nil {
+		return status
+	}
+	raw, ok := statuses[fmt.Sprintf("%d", serverID)]
+	if !ok || raw == nil {
+		return status
+	}
+	switch val := raw.(type) {
+	case ServerStatus:
+		return val
+	case map[string]interface{}:
+		if retries, ok := ccServerRetries(val); ok {
+			status.Retries = retries
+		}
+		if statusCode, ok := val["statusCode"].(string); ok {
+			status.StatusCode = statusCode
+		}
+		if response, ok := val["response"].(string); ok {
+			status.Response = response
+		}
+		if errorsValue, ok := val["errors"].(string); ok {
+			status.Errors = errorsValue
+		}
+		if requestStatus, ok := val["status"].(string); ok {
+			status.Status = models.RequestStatus(requestStatus)
+		}
+	}
+	return status
+}
+
+func setCCServerStatus(statuses dbutils.MapAnything, serverID int64, status ServerStatus) dbutils.MapAnything {
+	if statuses == nil {
+		statuses = dbutils.MapAnything{}
+	}
+	statuses[fmt.Sprintf("%d", serverID)] = map[string]interface{}{
+		"retries":    status.Retries,
+		"status":     status.Status,
+		"statusCode": status.StatusCode,
+		"response":   status.Response,
+		"errors":     status.Errors,
+	}
+	return statuses
+}
+
+func ccServerRetries(status map[string]any) (int, bool) {
+	if status == nil {
+		return 0, false
+	}
+	switch val := status["retries"].(type) {
+	case float64:
+		return int(val), true
+	case int:
+		return val, true
+	case int32:
+		return int(val), true
+	case int64:
+		return int(val), true
+	default:
+		return 0, false
+	}
+}
+
 // Scan is the db driver scanner for ServerStatus
 func (a *ServerStatus) Scan(value interface{}) error {
 	b, ok := value.([]byte)
@@ -220,23 +284,12 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 			var ccServerStatus ServerStatus
 			if ccServerObject, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", ccServers[0])); ok {
 				// get server status from request
-				if ccstatusObj, ok := r.CCServersStatus[fmt.Sprintf("%d", ccServerObject.ID())]; ok {
-
-					if val, ok := ccstatusObj.(ServerStatus); ok {
-						ccServerStatus = val
-					}
-				}
+				ccServerStatus = getCCServerStatus(r.CCServersStatus, int64(ccServerObject.ID()))
 				// Now check with the ccServerStatus object for sending eligibility
 				// check if we have exceeded the retries for this server
 				if ccServerStatus.Retries > config.MFLIntegratorConf.Server.MaxRetries {
 					ccServerStatus.Status = models.RequestStatusExpired
-					var ccServerStatusJSON dbutils.MapAnything
-					err := ccServerStatusJSON.Scan(ccServerStatus)
-					if err != nil {
-						log.WithError(err).Error("Failed to convert CC server status to required db type")
-						return false
-					}
-					r.CCServersStatus = ccServerStatusJSON
+					r.CCServersStatus = setCCServerStatus(r.CCServersStatus, int64(ccServerObject.ID()), ccServerStatus)
 					r.updateCCServerStatus(tx)
 					log.WithFields(log.Fields{
 						"server":   ccServerObject.Name(),
@@ -260,13 +313,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 					ccServerStatus.StatusCode = "ERROR7"
 					ccServerStatus.Retries += 1
 					ccServerStatus.Status = models.RequestStatusCanceled
-					var ccServerStatusJSON dbutils.MapAnything
-					err := ccServerStatusJSON.Scan(ccServerStatus)
-					if err != nil {
-						log.WithError(err).Error("Failed to convert CC server status to required db type")
-						return false
-					}
-					r.CCServersStatus = ccServerStatusJSON
+					r.CCServersStatus = setCCServerStatus(r.CCServersStatus, int64(ccServerObject.ID()), ccServerStatus)
 					r.updateCCServerStatus(tx)
 					log.WithFields(log.Fields{
 						"server": ccServerObject.ID(),
@@ -280,13 +327,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 					ccServerStatus.StatusCode = "ERROR7"
 					ccServerStatus.Retries += 1
 					ccServerStatus.Status = models.RequestStatusCanceled
-					var ccServerStatusJSON dbutils.MapAnything
-					err := ccServerStatusJSON.Scan(ccServerStatus)
-					if err != nil {
-						log.WithError(err).Error("Failed to convert CC server status to required db type")
-						return false
-					}
-					r.CCServersStatus = ccServerStatusJSON
+					r.CCServersStatus = setCCServerStatus(r.CCServersStatus, int64(ccServerObject.ID()), ccServerStatus)
 					r.updateCCServerStatus(tx)
 					log.WithFields(log.Fields{
 						"request": r.ID, "CCServer": ccServers[0],
@@ -299,13 +340,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 					ccServerStatus.Status = models.RequestStatusFailed
 					ccServerStatus.StatusCode = "ERROR1"
 					ccServerStatus.Errors = "Request has empty body"
-					var ccServerStatusJSON dbutils.MapAnything
-					err := ccServerStatusJSON.Scan(ccServerStatus)
-					if err != nil {
-						log.WithError(err).Error("Failed to convert CC server status to required db type")
-						return false
-					}
-					r.CCServersStatus = ccServerStatusJSON
+					r.CCServersStatus = setCCServerStatus(r.CCServersStatus, int64(ccServerObject.ID()), ccServerStatus)
 					r.updateCCServerStatus(tx)
 
 					log.WithFields(log.Fields{
@@ -665,14 +700,12 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 			// err := json.NewDecoder(resp.Body).Decode(&result)
 			if err != nil {
 				if serverInCC {
-					serverStatus := reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())].(map[string]interface{})
-					summary := "Failed to decode import summary"
-					newServerStatus := make(map[string]interface{})
-					newServerStatus["errors"] = summary
-					newServerStatus["status"] = models.RequestStatusFailed
-					newServerStatus["statusCode"] = "ERROR03"
-					newServerStatus["retries"] = int(serverStatus["retries"].(float64) + 1)
-					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
+					serverStatus := getCCServerStatus(reqObj.CCServersStatus, int64(destination.ID()))
+					serverStatus.Errors = "Failed to decode import summary"
+					serverStatus.Status = models.RequestStatusFailed
+					serverStatus.StatusCode = "ERROR03"
+					serverStatus.Retries += 1
+					reqObj.CCServersStatus = setCCServerStatus(reqObj.CCServersStatus, int64(destination.ID()), serverStatus)
 					reqObj.updateCCServerStatus(tx)
 					// _, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
 				} else {
@@ -688,14 +721,11 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 			if resp.StatusCode/100 == 2 {
 
 				if serverInCC {
-					serverStatus := reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())].(map[string]interface{})
-					summary := fmt.Sprintf("Created: %d, Updated: %d", result.Response.Stats.Created, result.Response.Stats.Updated)
-					newServerStatus := make(map[string]interface{})
-					newServerStatus["errors"] = summary
-					newServerStatus["status"] = models.RequestStatusCompleted
-					newServerStatus["statusCode"] = fmt.Sprintf("%d", resp.StatusCode)
-					newServerStatus["retries"] = serverStatus["retries"]
-					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
+					serverStatus := getCCServerStatus(reqObj.CCServersStatus, int64(destination.ID()))
+					serverStatus.Errors = fmt.Sprintf("Created: %d, Updated: %d", result.Response.Stats.Created, result.Response.Stats.Updated)
+					serverStatus.Status = models.RequestStatusCompleted
+					serverStatus.StatusCode = fmt.Sprintf("%d", resp.StatusCode)
+					reqObj.CCServersStatus = setCCServerStatus(reqObj.CCServersStatus, int64(destination.ID()), serverStatus)
 					// reqObj.updateCCServerStatus(tx)
 					_, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
 
@@ -724,19 +754,12 @@ func ProcessRequest(tx *sqlx.Tx, reqObj RequestObj, destination models.Server, s
 					"requestID": reqObj.ID, "responseStatus": resp.StatusCode, "ServerInCC": serverInCC,
 				}).Warn("A non 200 response")
 				if serverInCC {
-					serverStatus := reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())].(map[string]interface{})
-					// summary := fmt.Sprintf("Created: 0, Updated: 0")
-					newServerStatus := make(map[string]interface{})
-					newServerStatus["status"] = "failed"
-					newServerStatus["statusCode"] = fmt.Sprintf("%d", resp.StatusCode)
-					switch serverStatus["retries"].(type) {
-					case float64:
-						newServerStatus["retries"] = int(serverStatus["retries"].(float64) + 1)
-					case int:
-						newServerStatus["retries"] = serverStatus["retries"].(int) + 1
-					}
-					newServerStatus["errors"] = "server possibly unreachable"
-					reqObj.CCServersStatus[fmt.Sprintf("%d", destination.ID())] = newServerStatus
+					serverStatus := getCCServerStatus(reqObj.CCServersStatus, int64(destination.ID()))
+					serverStatus.Status = models.RequestStatusFailed
+					serverStatus.StatusCode = fmt.Sprintf("%d", resp.StatusCode)
+					serverStatus.Retries += 1
+					serverStatus.Errors = "server possibly unreachable"
+					reqObj.CCServersStatus = setCCServerStatus(reqObj.CCServersStatus, int64(destination.ID()), serverStatus)
 					_, _ = tx.NamedExec(`UPDATE requests SET cc_servers_status = :cc_servers_status WHERE id = :id`, reqObj)
 
 					// reqObj.updateCCServerStatus(tx)
@@ -912,21 +935,16 @@ func RetryIncompleteRequests() {
 				if ccServer, ok := models.GetServerFromRegistryByID(fmt.Sprintf("%d", item)); ok {
 
 					// get cc server's status
-					var ccServerStatus map[string]any
-					if ccStatusObj, ok := reqObj.CCServersStatus[fmt.Sprintf("%d", item)]; ok {
-
-						if val, ok := ccStatusObj.(map[string]any); ok {
-							ccServerStatus = val
-						}
-					}
+					ccServerStatus := getCCServerStatus(reqObj.CCServersStatus, int64(item))
+					retries := ccServerStatus.Retries
 
 					// only retry if max retries is not exceeded else expire request
-					if int(ccServerStatus["retries"].(float64)) <= config.MFLIntegratorConf.Server.MaxRetries {
+					if retries <= config.MFLIntegratorConf.Server.MaxRetries {
 						log.WithFields(
 							log.Fields{
 								"CCServerID":  item,
 								"ServerIndex": index,
-								"Retries":     ccServerStatus["retries"],
+								"Retries":     retries,
 								"RequestID":   reqObj.ID,
 							}).Info("+ Incomplete Request Retry")
 						return ProcessRequest(tx, reqObj, ccServer, true, true)
@@ -935,7 +953,7 @@ func RetryIncompleteRequests() {
 							log.Fields{
 								"CCServerID":  item,
 								"ServerIndex": index,
-								"Retries":     ccServerStatus["retries"],
+								"Retries":     retries,
 								"RequestID":   reqObj.ID,
 							}).Info("Skipping incomplete request retry. Max retries exceeded!")
 						reqObj.withStatus(models.RequestStatusExpired).updateRequestStatus(tx)
