@@ -39,6 +39,40 @@ var (
 
 const VERSION = "1.0.3"
 
+// RedactedSummary returns a small, non-sensitive config view suitable for logs.
+func RedactedSummary() map[string]any {
+	return map[string]any{
+		"database": map[string]any{
+			"max_open_conns":     MFLIntegratorConf.Database.MaxOpenConns,
+			"max_idle_conns":     MFLIntegratorConf.Database.MaxIdleConns,
+			"conn_max_lifetime":  MFLIntegratorConf.Database.ConnMaxLifetime,
+			"conn_max_idle_time": MFLIntegratorConf.Database.ConnMaxIdleTime,
+		},
+		"server": map[string]any{
+			"host":                      MFLIntegratorConf.Server.Host,
+			"port":                      MFLIntegratorConf.Server.Port,
+			"max_retries":               MFLIntegratorConf.Server.MaxRetries,
+			"max_concurrent":            MFLIntegratorConf.Server.MaxConcurrent,
+			"request_process_interval":  MFLIntegratorConf.Server.RequestProcessInterval,
+			"sync_on":                   MFLIntegratorConf.Server.SyncOn,
+			"skip_request_processing":   MFLIntegratorConf.Server.SkipRequestProcessing,
+			"skip_admin_units_matching": MFLIntegratorConf.Server.SkipAdminUnitsMatching,
+			"skip_ou_sync":              MFLIntegratorConf.Server.SkipOUSync,
+			"sync_schedule_off":         MFLIntegratorConf.Server.SyncScheduleOFF,
+			"sync_to_dhis2_instances":   MFLIntegratorConf.Server.SyncToDHIS2Instances,
+		},
+		"api": map[string]any{
+			"mfl_base_url":                MFLIntegratorConf.API.MFLBaseURL,
+			"dhis2_base_url":              MFLIntegratorConf.API.DHIS2BaseURL,
+			"dhis2_facility_level":        MFLIntegratorConf.API.DHIS2FacilityLevel,
+			"dhis2_district_oulevel_name": MFLIntegratorConf.API.DHIS2DistrictLevelName,
+			"metadata_batch_size":         MFLIntegratorConf.API.MetadataBatchSize,
+			"sync_cron_expression":        MFLIntegratorConf.API.SyncCronExpression,
+			"retry_cron_expression":       MFLIntegratorConf.API.RetryCronExpression,
+		},
+	}
+}
+
 // Load reads configuration (defaults < file < env < flags), unmarshals into MFLIntegratorConf,
 // and loads per-server configs from conf.d.
 func Load() error {

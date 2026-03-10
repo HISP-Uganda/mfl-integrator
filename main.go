@@ -60,7 +60,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
-	log.WithField("CONFIG", config.MFLIntegratorConf).Info("Loaded config")
+	log.WithField("config", config.RedactedSummary()).Info("Loaded config")
 
 	if err := db.Init(); err != nil {
 		log.Fatalf("Main: failed to init database: %v\n", err)

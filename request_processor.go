@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,6 +23,10 @@ import (
 	"github.com/samber/lo"
 	log "github.com/sirupsen/logrus"
 )
+
+var outboundHTTPClient = &http.Client{
+	Timeout: 60 * time.Second,
+}
 
 // ServerStatus is the status object within each request to
 // track status for the CC servers
@@ -356,13 +359,15 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 		destURL += r.URLSurffix
 	}
 	req, err := http.NewRequest(destination.HTTPMethod(), destURL, bytes.NewReader(marshalled))
+	if err != nil {
+		return nil, err
+	}
 
 	switch destination.AuthMethod() {
 	case "Token":
 		// Add API token
 		tokenAuth := "ApiToken " + destination.AuthToken()
 		req.Header.Set("Authorization", tokenAuth)
-		log.WithField("AuthToken", tokenAuth).Info("The authentication token:")
 	case "Basic", "Basic Auth":
 		auth := destination.Username() + ":" + destination.Password()
 		basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
@@ -377,18 +382,7 @@ func (r *RequestObj) sendRequest(destination models.Server) (*http.Response, err
 	}
 
 	req.Header.Set("Content-Type", r.ContentType)
-	// Create custom transport with TLS settings
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			// Set any necessary TLS settings here
-			// For example, to disable certificate validation:
-			InsecureSkipVerify: true,
-		},
-	}
-
-	client := &http.Client{Transport: tr}
-
-	resp, err := client.Do(req)
+	resp, err := outboundHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
