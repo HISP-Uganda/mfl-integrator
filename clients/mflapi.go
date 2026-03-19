@@ -17,7 +17,7 @@ const (
 )
 
 type Facility struct {
-	ID                  string     `json:"id,omitempty"`
+	ID                  int64      `json:"id,omitempty"`
 	Identifier          string     `json:"identifier"`
 	MFLUID              string     `json:"mfl_uid,omitempty"`
 	Name                string     `json:"name"`
