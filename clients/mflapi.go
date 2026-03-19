@@ -266,6 +266,9 @@ func (c *Client) ListFacilities(
 		SetQueryParams(params).
 		SetResult(&out).
 		Get("/orgunits") // <-- change if your endpoint path differs
+
+	log.WithFields(log.Fields{"query": q, "URL": c.RestClient.BaseURL, "statusCode": resp.StatusCode()}).Info("streaming facilities")
+
 	if err != nil {
 		return nil, fmt.Errorf("list facilities: %w", err)
 	}
@@ -273,7 +276,6 @@ func (c *Client) ListFacilities(
 	if resp.IsError() {
 		return nil, fmt.Errorf("list facilities: status=%d body=%s", resp.StatusCode(), string(resp.Body()))
 	}
-	log.WithFields(log.Fields{"query": q, "URL": c.RestClient.BaseURL, "statusCode": resp.StatusCode()}).Info("streaming facilities")
 
 	// Normalize possible null rows into an empty slice
 	if out.OrgUnits == nil {
