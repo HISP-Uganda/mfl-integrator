@@ -382,6 +382,9 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 				}).Info("Matching Process: No matching OU found")
 
 			case 1:
+				log.WithFields(log.Fields{
+					"MFLUID": mflUID, "Name": name, "Parent": parentMFLUID, "Level": l.Level,
+				}).Info("Matching Process: Exact match found for facility!")
 				ou := ous[0]
 				ou.UpdateMFLID(identifier)
 				ou.UpdateMFLUID(mflUID)
@@ -399,7 +402,7 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 					// log cleanly, but with more detail
 					log.WithFields(log.Fields{
 						"MFLUID": mflUID, "Name": name, "Parent": parentMFLUID,
-					}).Info("Matching Process: No matching parent OU found")
+					}).Info("Matching Process: No matching parent OU found when disambiguating...")
 					return nil
 				}
 				for _, ou := range ous {
