@@ -268,6 +268,10 @@ func (c *Client) ListFacilities(
 		SetResult(&out).
 		Get("/orgunits") // <-- change if your endpoint path differs
 
+	if q.Level == "1" || q.Level == "2" {
+		log.WithField("response", string(resp.Body())).Info("Listing facilities")
+	}
+
 	log.WithFields(log.Fields{"query": q, "URL": c.RestClient.BaseURL, "statusCode": resp.StatusCode(), "OUs Returned": len(out.OrgUnits)}).Info("streaming facilities")
 
 	if err != nil {
