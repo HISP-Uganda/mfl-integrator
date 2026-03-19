@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -375,11 +376,14 @@ func (c *Client) StreamFacilities(
 
 		resp, err := c.ListFacilities(ctx, q)
 		if err != nil {
+			log.WithFields(log.Fields{"query": q, "error": err}).Info("streaming facilities. Error")
 			return err
 		}
 
 		// No rows => done
 		if len(resp.OrgUnits) == 0 {
+
+			log.WithFields(log.Fields{"query": q, "error": err}).Info("streaming facilities. None found")
 			return nil
 		}
 
