@@ -66,7 +66,7 @@ type Pager struct {
 
 type PageResponse[T any] struct {
 	Pager    Pager `json:"pager"`
-	OrgUnits []T   `json:"OrgUnits"`
+	OrgUnits []T   `json:"orgunits"`
 }
 
 // Client is a Resty-based client for the Facilities API.
