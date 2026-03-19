@@ -386,8 +386,33 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 					"MFLUID": mflUID, "Name": name, "Parent": parentMFLUID, "Level": l.Level,
 				}).Info("Matching Process: Exact match found for facility!")
 				ou := ous[0]
-				ou.UpdateMFLID(identifier)
-				ou.UpdateMFLUID(mflUID)
+				if parentMFLUID != "" {
+					parentLocalID := models.GetOUByMFLParentUID(parentMFLUID)
+					if parentLocalID == 0 {
+						log.WithFields(log.Fields{
+							"MFLUID": mflUID, "Name": name, "Parent": parentMFLUID, "Level": l.Level,
+						}).Info("Matching Process: Parent OU not found for exact-name match")
+						return nil
+					}
+					if ou.ParentID != parentLocalID {
+						log.WithFields(log.Fields{
+							"MFLUID":          mflUID,
+							"Name":            name,
+							"Parent":          parentMFLUID,
+							"Level":           l.Level,
+							"CandidateUID":    ou.UID,
+							"CandidateParent": ou.ParentID,
+							"ExpectedParent":  parentLocalID,
+						}).Warn("Matching Process: Exact-name match rejected because parent did not match")
+						return nil
+					}
+				}
+				if identifier != "" {
+					ou.UpdateMFLID(identifier)
+				}
+				if mflUID != "" {
+					ou.UpdateMFLUID(mflUID)
+				}
 				if parentMFLUID != "" {
 					ou.UpdateMFLParent(parentMFLUID)
 				}
@@ -405,12 +430,33 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 					}).Info("Matching Process: No matching parent OU found when disambiguating...")
 					return nil
 				}
+				matched := false
 				for _, ou := range ous {
 					if ou.ParentID == parentLocalID {
-						ou.UpdateMFLID(identifier)
-						ou.UpdateMFLUID(mflUID)
+						if identifier != "" {
+							ou.UpdateMFLID(identifier)
+						}
+						if mflUID != "" {
+							ou.UpdateMFLUID(mflUID)
+						}
 						ou.UpdateMFLParent(parentMFLUID)
+						matched = true
+						break
 					}
+				}
+				if !matched {
+					candidateParents := make([]dbutils.Int, 0, len(ous))
+					for _, ou := range ous {
+						candidateParents = append(candidateParents, ou.ParentID)
+					}
+					log.WithFields(log.Fields{
+						"MFLUID":           mflUID,
+						"Name":             name,
+						"Parent":           parentMFLUID,
+						"Level":            l.Level,
+						"ExpectedParentID": parentLocalID,
+						"CandidateParents": candidateParents,
+					}).Warn("Matching Process: No candidate OU matched the resolved parent")
 				}
 			}
 
