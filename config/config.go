@@ -58,6 +58,7 @@ func RedactedSummary() map[string]any {
 			"skip_request_processing":   MFLIntegratorConf.Server.SkipRequestProcessing,
 			"skip_admin_units_matching": MFLIntegratorConf.Server.SkipAdminUnitsMatching,
 			"skip_ou_sync":              MFLIntegratorConf.Server.SkipOUSync,
+			"mfl_sync_off":              MFLIntegratorConf.Server.MFLSyncOFF,
 			"sync_schedule_off":         MFLIntegratorConf.Server.SyncScheduleOFF,
 			"sync_to_dhis2_instances":   MFLIntegratorConf.Server.SyncToDHIS2Instances,
 		},
@@ -414,6 +415,7 @@ type Config struct {
 		SkipAdminUnitsMatching  bool   `mapstructure:"skip_admin_units_matching" env:"MFLINTEGRATOR_SKIP_ADMIN_UNITS_MATCHING" env-default:"true"`
 		SkipOUSync              bool   `mapstructure:"skip_ou_sync" env:"MFLINTEGRATOR_SKIP_OU_SYNC" env-default:"false"`
 		SyncScheduleOFF         bool   `mapstructure:"sync_schedule_off" env:"MFLINTEGRATOR_SYNC_SCHEDULE_OFF" env-default:"false"`
+		MFLSyncOFF              bool   `mapstructure:"mfl_sync_off" env-default:"false"`
 		ForceSync               bool   `mapstructure:"force_sync" env:"MFLINTEGRATOR_FORCE_SYNC" env-default:"false"` // Assume OU hierarchy already there
 		SyncOn                  bool   `mapstructure:"sync_on" env:"MFLINTEGRATOR_SYNC_ON" env-default:"true"`
 		FakeSyncToBaseDHIS2     bool   `mapstructure:"fake_sync_to_base_dhis2" env:"MFLINTEGRATOR_FAKE_SYNC_TO_BASE_DHIS2" env-default:"false"`
