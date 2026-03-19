@@ -17,27 +17,28 @@ const (
 )
 
 type Facility struct {
+	ID                  string     `json:"id,omitempty"`
 	Identifier          string     `json:"identifier"`
-	MFLUID              string     `json:"mfl_uid"`
+	MFLUID              string     `json:"mfl_uid,omitempty"`
 	Name                string     `json:"name"`
-	ShortName           string     `json:"short_name"`
-	HistoricalID        string     `json:"historical_id"`
-	Status              *string    `json:"status"`
-	Reporting           bool       `json:"reporting"`
-	Licensed            bool       `json:"licensed"`
+	ShortName           string     `json:"shortName,omitempty"`
+	HistoricalID        string     `json:"historical_id,omitempty"`
+	Status              *string    `json:"status,omitempty"`
+	Reporting           bool       `json:"reporting,omitempty"`
+	Licensed            bool       `json:"licensed,omitempty"`
 	Address             *string    `json:"address,omitempty"`
 	ContactPersonEmail  *string    `json:"contact_personemail,omitempty"`
 	ContactPersonMobile *string    `json:"contact_personmobile,omitempty"`
 	ContactPersonName   *string    `json:"contact_personname,omitempty"`
 	ContactPersonTitle  *string    `json:"contact_persontitle,omitempty"`
-	Longitude           *float64   `json:"longitude"`
-	Latitude            *float64   `json:"latitude"`
+	Longitude           *float64   `json:"longitude,omitempty"`
+	Latitude            *float64   `json:"latitude,omitempty"`
 	OpeningDate         *time.Time `json:"opening_date,omitempty"`
 	ClosingDate         *time.Time `json:"closing_date,omitempty"`
 	BedCapacity         *int       `json:"bed_capacity,omitempty"`
 	Services            []string   `json:"services,omitempty"`
-	CreatedAt           time.Time  `json:"created"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	CreatedAt           time.Time  `json:"created,omitempty"`
+	UpdatedAt           time.Time  `json:"updatedAt,omitempty"`
 	Parent              *RefEntity `json:"parent,omitempty"`
 	Level               *int       `json:"level,omitempty"`
 	National            *RefEntity `json:"national,omitempty"`
@@ -53,8 +54,8 @@ type Facility struct {
 
 type RefEntity struct {
 	ID     int64  `json:"id,omitempty"`
-	MFLUID string `json:"mfl_uid"`
-	Name   string `json:"name"`
+	MFLUID string `json:"mfl_uid,omitempty"`
+	Name   string `json:"name,omitempty"`
 }
 
 type Pager struct {
