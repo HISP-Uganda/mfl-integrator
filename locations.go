@@ -343,6 +343,9 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 			PageSize: pageSize,
 			Level:    fmt.Sprintf("%d", l.Level),
 		}
+		matchedTotal := 0
+		matchedExact := 0
+		matchedByParent := 0
 
 		log.WithFields(log.Fields{"level": l.Level}).Info("Matching MFL organisation units for level")
 
@@ -416,6 +419,8 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 				if parentMFLUID != "" {
 					ou.UpdateMFLParent(parentMFLUID)
 				}
+				matchedTotal++
+				matchedExact++
 
 			default:
 				// disambiguate by parent
@@ -441,6 +446,8 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 						}
 						ou.UpdateMFLParent(parentMFLUID)
 						matched = true
+						matchedTotal++
+						matchedByParent++
 						break
 					}
 				}
@@ -472,7 +479,12 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 			log.WithError(StreamErr).WithFields(log.Fields{"level": l.Level}).Info("StreamFacilities failed")
 		}
 		// log done matching for level
-		log.WithFields(log.Fields{"level": l.Level}).Info("MatchLocations With MFL completed for level")
+		log.WithFields(log.Fields{
+			"level":             l.Level,
+			"matched_total":     matchedTotal,
+			"matched_exact":     matchedExact,
+			"matched_by_parent": matchedByParent,
+		}).Info("MatchLocations With MFL completed for level")
 	}
 	// log matching process completed
 	log.Info("Match Locations With MFL completed for all levels")
