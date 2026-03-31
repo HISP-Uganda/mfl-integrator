@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -132,6 +133,50 @@ func TestListFacilitiesBuildsExpectedRequest(t *testing.T) {
 	}
 	if len(resp.OrgUnits) != 0 {
 		t.Fatalf("got %d org units, want 0", len(resp.OrgUnits))
+	}
+}
+
+func TestListFacilitiesAcceptsTimezoneLessTimestamps(t *testing.T) {
+	t.Parallel()
+
+	restyClient := resty.New()
+	restyClient.SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"pager":{"page":1,"pageSize":1,"pageCount":1,"total":1},
+				"orgunits":[{
+					"id":350,
+					"mfl_uid":"jZQNbneoe9S",
+					"identifier":"8038880",
+					"name":"Pioneer Medical Centre Clinic",
+					"lastUpdated":"2026-03-26T09:08:11.691013",
+					"created":"2026-03-26T09:08:11.691013"
+				}]
+			}`)),
+			Request: r,
+		}, nil
+	}))
+
+	client := NewMFLApi("http://example.test", WithResty(restyClient))
+	resp, err := client.ListFacilities(context.Background(), FacilitiesQuery{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(resp.OrgUnits) != 1 {
+		t.Fatalf("got %d org units, want 1", len(resp.OrgUnits))
+	}
+
+	got := resp.OrgUnits[0]
+	want := time.Date(2026, time.March, 26, 9, 8, 11, 691013000, time.UTC)
+
+	if !got.LastUpdated.Time.Equal(want) {
+		t.Fatalf("got lastUpdated %v, want %v", got.LastUpdated.Time, want)
+	}
+	if !got.CreatedAt.Time.Equal(want) {
+		t.Fatalf("got created %v, want %v", got.CreatedAt.Time, want)
 	}
 }
 

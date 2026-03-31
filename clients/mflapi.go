@@ -1,7 +1,9 @@
 package clients
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -33,12 +35,12 @@ type Facility struct {
 	ContactPersonTitle  *string    `json:"contact_persontitle,omitempty"`
 	Longitude           *float64   `json:"longitude,omitempty"`
 	Latitude            *float64   `json:"latitude,omitempty"`
-	OpeningDate         *time.Time `json:"opening_date,omitempty"`
-	ClosingDate         *time.Time `json:"closing_date,omitempty"`
+	OpeningDate         *MFLTime   `json:"opening_date,omitempty"`
+	ClosingDate         *MFLTime   `json:"closing_date,omitempty"`
 	BedCapacity         *int       `json:"bed_capacity,omitempty"`
 	Services            []string   `json:"services,omitempty"`
-	CreatedAt           time.Time  `json:"created,omitempty"`
-	UpdatedAt           time.Time  `json:"updatedAt,omitempty"`
+	CreatedAt           MFLTime    `json:"created,omitempty"`
+	UpdatedAt           MFLTime    `json:"updatedAt,omitempty"`
 	Parent              *RefEntity `json:"parent,omitempty"`
 	Level               *int       `json:"level,omitempty"`
 	National            *RefEntity `json:"national,omitempty"`
@@ -49,7 +51,47 @@ type Facility struct {
 	FacilityLevel       *RefEntity `json:"facility_level"`
 	Ownership           *RefEntity `json:"ownership,omitempty"`
 	Authority           *RefEntity `json:"authority,omitempty"`
-	LastUpdated         time.Time  `json:"lastUpdated,omitempty"`
+	LastUpdated         MFLTime    `json:"lastUpdated,omitempty"`
+}
+
+// MFLTime accepts RFC3339 timestamps and the timezone-less timestamp format
+// currently returned by the MFL API for some datetime fields.
+type MFLTime struct {
+	time.Time
+}
+
+func (t *MFLTime) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, []byte("null")) {
+		t.Time = time.Time{}
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+
+	s = strings.TrimSpace(s)
+	if s == "" {
+		t.Time = time.Time{}
+		return nil
+	}
+
+	layouts := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	}
+
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, s); err == nil {
+			t.Time = ts
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unsupported MFL timestamp format %q", s)
 }
 
 type RefEntity struct {

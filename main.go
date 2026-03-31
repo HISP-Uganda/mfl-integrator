@@ -28,14 +28,6 @@ func init() {
 	formatter.TimestampFormat = time.RFC3339
 	formatter.FullTimestamp = true
 
-	//file, err := os.OpenFile(
-	//	config.MFLIntegratorConf.Server.LogDirectory+string(os.PathSeparator)+"server.log",
-	//	os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
-	//log.SetOutput(io.MultiWriter(os.Stdout, file))
-	// defer file.Close()
 	log.SetFormatter(formatter)
 	log.SetOutput(os.Stdout)
 }
