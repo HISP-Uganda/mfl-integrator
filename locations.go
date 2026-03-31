@@ -836,7 +836,7 @@ func FetchFacilities2(mflId, batchId string) {
 	// 4) Build query params for the new API
 	q := clients.FacilitiesQuery{
 		Page:     1,
-		PageSize: 200, // max supported
+		PageSize: config.MFLIntegratorConf.API.MFLPageSize,
 		Level:    fmt.Sprintf("%d", config.MFLIntegratorConf.API.DHIS2FacilityLevel),
 		// IMPORTANT: your new API filters are name-based partial matches.
 		// If mflId is a district name, this is correct.

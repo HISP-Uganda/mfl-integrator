@@ -64,6 +64,7 @@ func RedactedSummary() map[string]any {
 		},
 		"api": map[string]any{
 			"mfl_base_url":                MFLIntegratorConf.API.MFLBaseURL,
+			"mfl_page_size":               MFLIntegratorConf.API.MFLPageSize,
 			"dhis2_base_url":              MFLIntegratorConf.API.DHIS2BaseURL,
 			"dhis2_facility_level":        MFLIntegratorConf.API.DHIS2FacilityLevel,
 			"dhis2_district_oulevel_name": MFLIntegratorConf.API.DHIS2DistrictLevelName,
@@ -203,6 +204,7 @@ func setDefaults() {
 
 	// api.*
 	viper.SetDefault("api.dhis2_top_level_tree_ids", "")
+	viper.SetDefault("api.mfl_page_size", 200)
 	viper.SetDefault("api.dhis2_facility_level", 5)
 	viper.SetDefault("api.dhis2_district_oulevel_name", "District/City")
 	viper.SetDefault("api.metadata_batch_size", 50)
@@ -430,6 +432,7 @@ type Config struct {
 
 	API struct {
 		MFLBaseURL               string `mapstructure:"mfl_base_url" env:"MFLINTEGRATOR_BASE_URL" env-description:"The MFL base API URL"`
+		MFLPageSize              int    `mapstructure:"mfl_page_size" env:"MFLINTEGRATOR_MFL_PAGE_SIZE" env-description:"The page size used when fetching facilities from MFL" env-default:"200"`
 		MFLUser                  string `mapstructure:"mfl_user"  env:"MFLINTEGRATOR_USER" env-description:"The MFL API username"`
 		MFLPassword              string `mapstructure:"mfl_password"  env:"MFLINTEGRATOR_PASSWORD" env-description:"The MFL API user password"`
 		DHIS2BaseURL             string `mapstructure:"dhis2_base_url" env:"MFLINTEGRATOR_DHIS2_BASE_URL" env-description:"The base DHIS2 instance base API URL"`

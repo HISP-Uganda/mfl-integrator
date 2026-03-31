@@ -15,7 +15,7 @@ import (
 const (
 	DefaultPage     = 1
 	DefaultPageSize = 50
-	MaxPageSize     = 200
+	MaxPageSize     = 500
 )
 
 type Facility struct {
