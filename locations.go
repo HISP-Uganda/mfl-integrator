@@ -32,44 +32,45 @@ func LoadOuLevels() {
 		log.WithError(err).Info("Error reading organisation unit levels:")
 		return
 	}
-	if id != 0 {
-		log.WithField("ouCount:", id).Info("Base Organisation units levels found!")
+	log.WithField("ouCount:", id).Info("Checking base organisation unit levels in local DB")
+
+	apiURL := config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnitLevels.json"
+	p := url.Values{}
+	p.Add("fields", "id,name,level")
+	p.Add("paging", "false")
+
+	ouURL := apiURL + "?" + p.Encode()
+	fmt.Println(ouURL)
+	resp, err := utils.GetWithBasicAuth(ouURL, config.MFLIntegratorConf.API.DHIS2User,
+		config.MFLIntegratorConf.API.DHIS2Password)
+	if err != nil {
+		log.WithError(err).Info("Failed to fetch organisation unit levels")
 		return
-	} else {
-		log.WithField("ouCount:", id).Info("Base Organisation units levels not found!")
-
-		apiURL := config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnitLevels.json"
-		p := url.Values{}
-		p.Add("fields", "id,name,level")
-		p.Add("paging", "false")
-
-		ouURL := apiURL + "?" + p.Encode()
-		fmt.Println(ouURL)
-		resp, err := utils.GetWithBasicAuth(ouURL, config.MFLIntegratorConf.API.DHIS2User,
-			config.MFLIntegratorConf.API.DHIS2Password)
-		if err != nil {
-			log.WithError(err).Info("Failed to fetch organisation unit levels")
-			return
+	}
+	v, _, _, err := jsonparser.Get(resp, "organisationUnitLevels")
+	if err != nil {
+		log.WithError(err).Error("No organisationUnitLevels found by json parser")
+		return
+	}
+	var ouLevels []models.OrgUnitLevel
+	err = json.Unmarshal(v, &ouLevels)
+	if err != nil {
+		fmt.Println("Error unmarshaling orgunit level response body:", err)
+		return
+	}
+	for i := range ouLevels {
+		ouLevels[i].UID = ouLevels[i].ID
+		if ouLevels[i].ExistsInDB() {
+			log.WithFields(log.Fields{
+				"uid":   ouLevels[i].UID,
+				"name":  ouLevels[i].Name,
+				"level": ouLevels[i].Level,
+			}).Info("Organisation unit level already exists in DB")
+			continue
 		}
-		// fmt.Println(string(resp))
-		v, _, _, err := jsonparser.Get(resp, "organisationUnitLevels")
-		if err != nil {
-			log.WithError(err).Error("No organisationUnitLevels found by json parser")
-			return
-		}
-		// fmt.Printf("Entries: %s", v)
-		var ouLevels []models.OrgUnitLevel
-		err = json.Unmarshal(v, &ouLevels)
-		if err != nil {
-			fmt.Println("Error unmarshaling orgunit level response body:", err)
-			return
-		}
-		for i := range ouLevels {
-			ouLevels[i].UID = ouLevels[i].ID
-			log.WithFields(
-				log.Fields{"uid": ouLevels[i].ID, "name": ouLevels[i].Name, "level": ouLevels[i].Level}).Info("Creating New Orgunit Level")
-			ouLevels[i].NewOrgUnitLevel()
-		}
+		log.WithFields(
+			log.Fields{"uid": ouLevels[i].ID, "name": ouLevels[i].Name, "level": ouLevels[i].Level}).Info("Creating New Orgunit Level")
+		ouLevels[i].NewOrgUnitLevel()
 	}
 }
 
@@ -81,45 +82,47 @@ func LoadOuGroups() {
 		log.WithError(err).Info("Error reading organisation unit groups:")
 		return
 	}
-	if id != 0 {
-		log.WithField("ouCount:", id).Info("Base Organisation unit groups found!")
+	log.WithField("ouCount:", id).Info("Checking base organisation unit groups in local DB")
+
+	apiURL := config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnitGroups.json"
+	p := url.Values{}
+	p.Add("fields", "id,name,shortName")
+	p.Add("paging", "false")
+
+	ouURL := apiURL + "?" + p.Encode()
+	fmt.Println(ouURL)
+	resp, err := utils.GetWithBasicAuth(ouURL, config.MFLIntegratorConf.API.DHIS2User,
+		config.MFLIntegratorConf.API.DHIS2Password)
+	if err != nil {
+		log.WithError(err).Info("Failed to fetch organisation unit groups")
 		return
-	} else {
-		log.WithField("ouCount:", id).Info("Base Organisation unit groups not found!")
-
-		apiURL := config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnitGroups.json"
-		p := url.Values{}
-		p.Add("fields", "id,name,shortName")
-		p.Add("paging", "false")
-
-		ouURL := apiURL + "?" + p.Encode()
-		fmt.Println(ouURL)
-		resp, err := utils.GetWithBasicAuth(ouURL, config.MFLIntegratorConf.API.DHIS2User,
-			config.MFLIntegratorConf.API.DHIS2Password)
-		if err != nil {
-			log.WithError(err).Info("Failed to fetch organisation unit groups")
-			return
+	}
+	v, _, _, err := jsonparser.Get(resp, "organisationUnitGroups")
+	if err != nil {
+		log.WithError(err).Error("json parser failed to get organisationUnitGroups key")
+		return
+	}
+	var ouGroups []models.OrgUnitGroup
+	err = json.Unmarshal(v, &ouGroups)
+	if err != nil {
+		fmt.Println("Error unmarshaling orgunit groups response body:", err)
+		return
+	}
+	for i := range ouGroups {
+		ouGroups[i].UID = ouGroups[i].ID
+		if len(ouGroups[i].ShortName) == 0 {
+			ouGroups[i].ShortName = ouGroups[i].Name
 		}
-		v, _, _, err := jsonparser.Get(resp, "organisationUnitGroups")
-		if err != nil {
-			log.WithError(err).Error("json parser failed to get organisationUnitGroups key")
-			return
+		if ouGroups[i].ExistsInDB() {
+			log.WithFields(log.Fields{
+				"uid":  ouGroups[i].UID,
+				"name": ouGroups[i].Name,
+			}).Info("Organisation unit group already exists in DB")
+			continue
 		}
-		var ouGroups []models.OrgUnitGroup
-		err = json.Unmarshal(v, &ouGroups)
-		if err != nil {
-			fmt.Println("Error unmarshaling orgunit groups response body:", err)
-			return
-		}
-		for i := range ouGroups {
-			ouGroups[i].UID = ouGroups[i].ID
-			if len(ouGroups[i].ShortName) == 0 {
-				ouGroups[i].ShortName = ouGroups[i].Name
-			}
-			log.WithFields(
-				log.Fields{"uid": ouGroups[i].ID, "name": ouGroups[i].Name, "level": ouGroups[i].ShortName}).Info("Creating New Orgunit Group")
-			ouGroups[i].NewOrgUnitGroup()
-		}
+		log.WithFields(
+			log.Fields{"uid": ouGroups[i].ID, "name": ouGroups[i].Name, "level": ouGroups[i].ShortName}).Info("Creating New Orgunit Group")
+		ouGroups[i].NewOrgUnitGroup()
 	}
 }
 

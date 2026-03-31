@@ -64,6 +64,25 @@ func (ol *OrgUnitLevel) NewOrgUnitLevel() {
 	}
 }
 
+func (ol *OrgUnitLevel) ExistsInDB() bool {
+	dbConn := db.GetDB()
+	var count int
+	if ol.UID == "" {
+		ol.UID = ol.ID
+	}
+	err := dbConn.Get(&count, `SELECT count(*) FROM orgunitlevel WHERE uid = $1 OR (name = $2 AND level = $3)`,
+		ol.UID, ol.Name, ol.Level)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"LevelUID":  ol.UID,
+			"LevelName": ol.Name,
+			"Level":     ol.Level,
+		}).Info("Error reading organisation unit level")
+		return false
+	}
+	return count > 0
+}
+
 type OrgUnitGroup struct {
 	ID        string  `db:"id" json:"id"`
 	UID       string  `db:"uid" json:"uid"`
@@ -82,11 +101,32 @@ func (og *OrgUnitGroup) DBID() int64 {
 	}
 	err := dbConn.Get(&id, `SELECT id FROM orgunitgroup WHERE uid = $1`, og.UID)
 	if err != nil {
-		log.WithError(err).WithField("GroupUID", og.UID).Info("Failed to get orgunit group DBID")
+		log.WithError(err).WithFields(log.Fields{
+			"GroupUID":  og.UID,
+			"GroupName": og.Name,
+		}).Info("Failed to get orgunit group DBID")
 		return 0
 	}
 	return id.Int64
 }
+
+func (og *OrgUnitGroup) ExistsInDB() bool {
+	dbConn := db.GetDB()
+	var count int
+	if og.UID == "" {
+		og.UID = og.ID
+	}
+	err := dbConn.Get(&count, `SELECT count(*) FROM orgunitgroup WHERE uid = $1 OR name = $2`, og.UID, og.Name)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"GroupUID":  og.UID,
+			"GroupName": og.Name,
+		}).Info("Error reading organisation unit group")
+		return false
+	}
+	return count > 0
+}
+
 func GetOuGroupUIDByName(name string) string {
 	dbConn := db.GetDB()
 	var uid string
@@ -511,9 +551,21 @@ func (o *OrganisationUnit) AddToGroup(ouGroup OrgUnitGroup) {
 }
 
 func (o *OrganisationUnit) AddToGroupByOrgUnitID(orgUnitID int64, ouGroup OrgUnitGroup) {
+
 	dbConn := db.GetDB()
+	groupDBID := ouGroup.DBID()
+	if groupDBID == 0 {
+		log.WithFields(log.Fields{
+			"OuUID":       o.UID,
+			"OrgUnitID":   orgUnitID,
+			"GroupName":   ouGroup.Name,
+			"GroupUID":    ouGroup.UID,
+			"LevelOfCare": ouGroup.Name,
+		}).Warn("Skipping orgunit group membership insert because orgunit group was not found")
+		return
+	}
 	_, err := dbConn.Exec(`INSERT INTO orgunitgroupmembers (organisationunitid, orgunitgroupid, created, updated)
-    			VALUES($1, $2, NOW(), NOW())`, orgUnitID, ouGroup.DBID())
+    			VALUES($1, $2, NOW(), NOW())`, orgUnitID, groupDBID)
 	if err != nil {
 		log.WithError(err).WithFields(log.Fields{"OuUID": o.UID, "oUGroup": ouGroup, "oUGroups": o.OrgUnitGroups}).Info(
 			"Failed to add orgunit to group")
