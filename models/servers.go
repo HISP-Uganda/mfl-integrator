@@ -842,23 +842,23 @@ func SyncLocationsToServer(serverName string) {
 	p.Add("paging", "true")
 	p.Add("pageSize", "1")
 	p.Add("level", fmt.Sprintf("%d", config.MFLIntegratorConf.API.DHIS2FacilityLevel-1))
-	chekOusURL := baseDHIS2URL + "/api/organisationUnits.json?" + p.Encode()
-	log.WithFields(log.Fields{"ServerURL": chekOusURL, "Name": server.Name()}).Info("Trying to send hierarchy to server")
+	chekAuth := baseDHIS2URL + "/api/organisationUnits.json?" + p.Encode()
+	// log.WithFields(log.Fields{"ServerURL": chekAuth, "Name": server.Name()}).Info("Trying to send hierarchy to server")
 
 	var respBody []byte
 	switch server.AuthMethod() {
 	case "Basic":
-		resp, err := utils.GetWithBasicAuth(chekOusURL, server.Username(), server.Password())
+		resp, err := utils.GetWithBasicAuth(chekAuth, server.Username(), server.Password())
 		respBody = resp
 		if err != nil {
-			log.WithError(err).Error("Failed to get ous from server")
+			log.WithError(err).Error("Failed when authenticating with basic auth for server")
 			return
 		}
 	case "Token":
-		resp, err := utils.GetWithToken(chekOusURL, server.AuthToken())
+		resp, err := utils.GetWithToken(chekAuth, server.AuthToken())
 		respBody = resp
 		if err != nil {
-			log.WithError(err).Error("Failed to get ous from server")
+			log.WithError(err).Error("Failed when authenticating with Token for server")
 			return
 		}
 	default:

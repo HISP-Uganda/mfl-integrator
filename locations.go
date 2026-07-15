@@ -393,7 +393,7 @@ func MatchLocationsWithMFL2(ctx context.Context, c *clients.Client) {
 				}).Info("Matching Process: Exact match found for facility!")
 				ou := ous[0]
 				if parentMFLUID != "" {
-					parentLocalID := models.GetOUByMFLParentUID(parentMFLUID)
+					parentLocalID := models.GetOUByUID(parentMFLUID)
 					if parentLocalID == 0 {
 						log.WithFields(log.Fields{
 							"MFLUID": mflUID, "Name": name, "Parent": parentMFLUID, "Level": l.Level,
@@ -830,7 +830,7 @@ func FetchFacilities2(mflId, batchId string) {
 			config.MFLIntegratorConf.API.MFLUser,
 			config.MFLIntegratorConf.API.MFLPassword,
 		),
-		clients.WithDebug(),
+		// clients.WithDebug(),
 	)
 
 	// 4) Build query params for the new API
@@ -850,10 +850,12 @@ func FetchFacilities2(mflId, batchId string) {
 	if facilityCount > 0 {
 		lastSyncDate := models.GetLastSyncDate(mflId)
 		if strings.TrimSpace(lastSyncDate) != "" {
-			// the new API expects YYYY-MM-DD
+			// the new API expects YYYY-MM-DD HH:MI
 			q.UpdatedSince = lastSyncDate
+			q.LastUpdated = lastSyncDate
 		} else {
-			q.UpdatedSince = "2023-01-01"
+			q.UpdatedSince = "2023-01-01 00:00"
+			q.LastUpdated = "2023-01-01 00:00"
 		}
 	}
 
@@ -861,7 +863,7 @@ func FetchFacilities2(mflId, batchId string) {
 	log.WithFields(log.Fields{
 		"start_time":     startTime.Format(time.RFC3339),
 		"existing_count": facilityCount,
-		"updated_since":  q.UpdatedSince,
+		"lastUpdated":    q.UpdatedSince,
 		"page_size":      q.PageSize,
 		"facility_level": q.Level,
 	}).WithFields(syncFields).Info("Starting facility sync")
@@ -1448,6 +1450,14 @@ func GetOrgUnitFromFacility(
 	if f.FacilityLevel != nil {
 		levelOfCare = strings.TrimSpace(f.FacilityLevel.Name)
 	}
+	ownership := ""
+	if f.Ownership != nil {
+		ownership = strings.TrimSpace(f.Ownership.Name)
+	}
+	authority := ""
+	if f.Authority != nil {
+		authority = strings.TrimSpace(f.Authority.Name)
+	}
 
 	// Build OrganisationUnit
 	facility := models.OrganisationUnit{}
@@ -1455,7 +1465,8 @@ func GetOrgUnitFromFacility(
 	facility.ID = historicalID
 	facility.UID = historicalID
 	facility.Name = name
-	facility.ShortName = SanitizeShortName(name)
+	shortName := strings.TrimSpace(f.ShortName)
+	facility.ShortName = SanitizeShortName(shortName)
 
 	// Old code stored FHIR fullUrl. New payload doesn't have it; keep blank or derive if you have a canonical URL.
 	facility.URL = ""
@@ -1492,9 +1503,9 @@ func GetOrgUnitFromFacility(
 	facility.Email = email
 	facility.Extras = extras
 
-	// Attribute values (same as before): store MFL UID into the configured attribute
+	// Attribute values (same as before): store MFLID into the configured attribute
 	attV := []models.AttributeValue{{
-		Value: mflUID,
+		Value: facility.MFLID,
 		Attribute: models.Attribute{
 			ID: config.MFLIntegratorConf.API.DHIS2OUMFLIDAttributeID,
 		},
@@ -1520,6 +1531,23 @@ func GetOrgUnitFromFacility(
 		facility.OrgUnitGroups = []models.OrgUnitGroup{
 			{Name: levelOfCare, UID: ouUID, ID: ouUID},
 		}
+	}
+	if ownership != "" {
+		ouUID, ok := orgUnitGroupUIDCache[ownership]
+		if !ok {
+			ouUID = models.GetOuGroupUIDByName(ownership)
+			orgUnitGroupUIDCache[ownership] = ouUID
+		}
+		facility.OrgUnitGroups = append(facility.OrgUnitGroups, models.OrgUnitGroup{Name: ownership, UID: ouUID, ID: ouUID})
+
+	}
+	if authority != "" {
+		ouUID, ok := orgUnitGroupUIDCache[authority]
+		if !ok {
+			ouUID = models.GetOuGroupUIDByName(authority)
+			orgUnitGroupUIDCache[authority] = ouUID
+		}
+		facility.OrgUnitGroups = append(facility.OrgUnitGroups, models.OrgUnitGroup{Name: authority, UID: ouUID, ID: ouUID})
 	}
 
 	return facility

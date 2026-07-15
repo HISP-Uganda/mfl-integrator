@@ -235,7 +235,7 @@ func (r *RequestObj) canSendRequest(tx *sqlx.Tx, server models.Server, serverInC
 	log.WithField("Reason", reason)
 	if !config.MFLIntegratorConf.Server.SyncOn {
 		reason = "Synchronisation turned off."
-		log.Info("Synchronisation turned off. Set sync_on to true activate")
+		log.Info("Synchronisation turned off. Set sync_on to true to activate")
 		return false // helps to globally turn off sync and debug
 	}
 

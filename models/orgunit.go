@@ -413,6 +413,25 @@ func GetOUByMFLParentUID(mflParentUID string) dbutils.Int {
 	return 0
 }
 
+func GetOUByUID(mflParentUID string) dbutils.Int {
+	if mflParentUID == "" {
+		return 0
+	}
+
+	dbConn := db.GetDB()
+	var id dbutils.Int
+	err := dbConn.Get(&id, `SELECT id FROM organisationunit WHERE uid = $1`, mflParentUID)
+	if err == nil {
+		return id
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0
+	}
+
+	log.WithError(err).WithField("mflParentUID", mflParentUID).Error("GetOUByUID: query failed")
+	return 0
+}
+
 func (o *OrganisationUnit) OrganisationUnitDBFields() []string {
 	e := reflect.ValueOf(o).Elem()
 	var ret []string

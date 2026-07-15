@@ -251,8 +251,8 @@ func (q FacilitiesQuery) normalize() (FacilitiesQuery, error) {
 
 	// validate date format if present
 	if strings.TrimSpace(out.LastUpdated) != "" {
-		if _, err := time.Parse("2006-01-02", out.LastUpdated); err != nil {
-			return out, fmt.Errorf("invalid last_updated %q (expected YYYY-MM-DD): %w", out.LastUpdated, err)
+		if _, err := time.Parse("2006-01-02 15:04", out.LastUpdated); err != nil {
+			return out, fmt.Errorf("invalid lastUpdated %q (expected YYYY-MM-DD): %w", out.LastUpdated, err)
 		}
 	}
 
@@ -299,7 +299,7 @@ func (c *Client) ListFacilities(
 	setIf("ownership", q.Ownership)
 	setIf("authority", q.Authority)
 	setIf("status", q.Status)
-	setIf("last_updated", q.LastUpdated)
+	setIf("lastUpdated", q.LastUpdated)
 	setIf("national", q.National)
 
 	var out PageResponse[Facility]

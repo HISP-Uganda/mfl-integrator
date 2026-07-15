@@ -1,0 +1,28 @@
+{
+  "name": "localhost_OU_GroupAdd",
+  "username":"admin",
+  "password":"district",
+  "URL":"http://localhost:8181/api/organisationUnitGroups",
+  "IsProxyServer":false,
+  "systemType":"DHIS2",
+  "endPointType":"OU_ORGUNIT_GROUP_ADD",
+  "authMethod":"Basic",
+  "authToken":"d2pat_sNQJTrUvZfDPCD8OTbYdcjW8vHQSzOok3233396680",
+  "HTTPMethod":"PATCH",
+  "callbackURL":"",
+  "allowCallbacks":false,
+  "allowCopies":false,
+  "useSSL": true,
+  "CCURLS": [],
+  "useAsync": false,
+  "parseResponses": true,
+  "startSubmissionPeriod":0,
+  "endSubmissionPeriod":23,
+  "URLParams": {},
+  "suspended":false,
+  "IPAddress": "*",
+  "JSONResponseXPATH": "",
+  "XMLResponseXPATH": "",
+  "allowedSources":["localhost", "dhis2"]
+
+}

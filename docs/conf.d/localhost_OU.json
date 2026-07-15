@@ -1,0 +1,33 @@
+{
+  "name": "localhost_OU",
+  "username":"admin",
+  "password":"district",
+  "URL":"http://localhost:8181/api/metadata.json",
+  "IsProxyServer":false,
+  "systemType":"DHIS2",
+  "endPointType":"Organisationunit",
+  "authMethod":"Basic",
+  "authToken":"d2pat_sNQJTrUvZfDPCD8OTbYdcjW8vHQSzOok3233xxxxxxx",
+  "HTTPMethod":"POST",
+  "callbackURL":"",
+  "allowCallbacks":false,
+  "allowCopies":false,
+  "useSSL": true,
+  "CCURLS": [],
+  "useAsync": false,
+  "parseResponses": true,
+  "startSubmissionPeriod":0,
+  "endSubmissionPeriod":23,
+  "URLParams": {
+    "mergeMode":"MERGE",
+    "importStrategy":
+    "CREATE_AND_UPDATE",
+    "async": false,
+    "importReportMode": "DEBUG"},
+  "suspended":false,
+  "IPAddress": "localhost",
+  "JSONResponseXPATH": "",
+  "XMLResponseXPATH": "",
+  "allowedSources":["localhost", "dhis2"]
+
+}

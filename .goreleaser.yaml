@@ -22,13 +22,12 @@ archives:
   #     amd64: x86_64
   - files:
       - README.md
-      # - db/**/*.sql
-      - db/**/*.*
-      - docs/*.*
+      - docs/**/*
+      - docs/*.yml
 checksum:
   name_template: 'checksums.txt'
 snapshot:
-  name_template: "{{ incpatch .Version }}"
+  name_template: "{{ .Version }}"
 changelog:
   sort: asc
   filters:
