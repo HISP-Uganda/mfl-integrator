@@ -1521,36 +1521,40 @@ func GetOrgUnitFromFacility(
 		facility.Geometry = geometry
 	}
 
-	// OrgUnitGroups from level-of-care
-	if levelOfCare != "" {
-		ouUID, ok := orgUnitGroupUIDCache[levelOfCare]
-		if !ok {
-			ouUID = models.GetOuGroupUIDByName(levelOfCare)
-			orgUnitGroupUIDCache[levelOfCare] = ouUID
-		}
-		facility.OrgUnitGroups = []models.OrgUnitGroup{
-			{Name: levelOfCare, UID: ouUID, ID: ouUID},
-		}
-	}
-	if ownership != "" {
-		ouUID, ok := orgUnitGroupUIDCache[ownership]
-		if !ok {
-			ouUID = models.GetOuGroupUIDByName(ownership)
-			orgUnitGroupUIDCache[ownership] = ouUID
-		}
-		facility.OrgUnitGroups = append(facility.OrgUnitGroups, models.OrgUnitGroup{Name: ownership, UID: ouUID, ID: ouUID})
-
-	}
-	if authority != "" {
-		ouUID, ok := orgUnitGroupUIDCache[authority]
-		if !ok {
-			ouUID = models.GetOuGroupUIDByName(authority)
-			orgUnitGroupUIDCache[authority] = ouUID
-		}
-		facility.OrgUnitGroups = append(facility.OrgUnitGroups, models.OrgUnitGroup{Name: authority, UID: ouUID, ID: ouUID})
-	}
+	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, levelOfCare)
+	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, ownership)
+	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, authority)
 
 	return facility
+}
+
+func appendDerivedOrgUnitGroup(
+	groups []models.OrgUnitGroup,
+	orgUnitGroupUIDCache map[string]string,
+	groupName string,
+) []models.OrgUnitGroup {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return groups
+	}
+
+	ouUID, ok := orgUnitGroupUIDCache[groupName]
+	if !ok {
+		ouUID = models.GetOuGroupUIDByName(groupName)
+		orgUnitGroupUIDCache[groupName] = ouUID
+	}
+	if ouUID == "" {
+		log.WithField("group_name", groupName).Warn("Skipping derived orgunit group with empty UID")
+		return groups
+	}
+
+	for _, existing := range groups {
+		if existing.ID == ouUID || existing.UID == ouUID || strings.EqualFold(existing.Name, groupName) {
+			return groups
+		}
+	}
+
+	return append(groups, models.OrgUnitGroup{Name: groupName, UID: ouUID, ID: ouUID})
 }
 
 func nilString(p *string) any {
@@ -1628,7 +1632,15 @@ func makeMetadataOu(facility models.OrganisationUnit) models.MetadataOu {
 		metadata.OrganisationUnitGroups = make([]dbutils.Map, 0, len(facility.OrgUnitGroups))
 		for _, group := range facility.OrgUnitGroups {
 			groupMap := dbutils.Map{}
-			groupMap.Set("id", group.ID)
+			if group.ID != "" {
+				groupMap.Set("id", group.ID)
+			}
+			if group.UID != "" {
+				groupMap.Set("uid", group.UID)
+			}
+			if group.Name != "" {
+				groupMap.Set("name", group.Name)
+			}
 			metadata.OrganisationUnitGroups = append(metadata.OrganisationUnitGroups, groupMap)
 		}
 	}
@@ -1674,13 +1686,26 @@ func CreateOrgUnitGroupPayload(ou models.MetadataOu) map[string][]byte {
 	ouGroupReqs := make(map[string][]byte)
 	if len(ou.OrganisationUnitGroups) > 0 {
 		for _, g := range ou.OrganisationUnitGroups {
-			groupId := g.Get("id", "")
-			ouGroupReqs[groupId.(string)] = []byte(fmt.Sprintf(
+			groupID := orgUnitGroupIdentifier(g)
+			if groupID == "" {
+				continue
+			}
+			ouGroupReqs[groupID] = []byte(fmt.Sprintf(
 				`[{"op": "add", "path": "/organisationUnits/-", "value": {"id": "%s"}}]`, ou.UID))
 		}
 
 	}
 	return ouGroupReqs
+}
+
+func orgUnitGroupIdentifier(group dbutils.Map) string {
+	if id, ok := group.Get("id", "").(string); ok && strings.TrimSpace(id) != "" {
+		return strings.TrimSpace(id)
+	}
+	if uid, ok := group.Get("uid", "").(string); ok && strings.TrimSpace(uid) != "" {
+		return strings.TrimSpace(uid)
+	}
+	return ""
 }
 
 // MakeOrgUnitGroupsAdditionRequests ....
