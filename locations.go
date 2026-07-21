@@ -1000,11 +1000,11 @@ func FetchFacilities2(mflId, batchId string) {
 
 			// XXX Create OU Group Requests here before removing groups
 			ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
-			log.WithFields(log.Fields{
-				"facility_uid":    facility.UID,
-				"groups_count":    len(ouGroupRequests),
-				"ouGroupRequests": ouGroupRequests,
-			}).WithFields(syncFields).Info("Prepared OU group requests for facility")
+			//log.WithFields(log.Fields{
+			//	"facility_uid":    facility.UID,
+			//	"groups_count":    len(ouGroupRequests),
+			//	"ouGroupRequests": ouGroupRequests,
+			//}).WithFields(syncFields).Info("Prepared OU group requests for facility")
 
 			// remove name and uid in organisationUnitGroups sent as part of metadata
 			facilityMetadata.OrganisationUnitGroups = lo.Map(
@@ -1151,9 +1151,8 @@ func FetchFacilities2(mflId, batchId string) {
 
 		ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
 		log.WithFields(log.Fields{
-			"facility_uid":    facility.UID,
-			"groups_count":    len(ouGroupRequests),
-			"ouGroupRequests": ouGroupRequests,
+			"facility_uid": facility.UID,
+			"groups_count": len(ouGroupRequests),
 		}).WithFields(syncFields).Info(".:UPDATE:. Prepared OU group requests for facility")
 
 		requestForms := MakeOrgUnitGroupsAdditionRequests(
