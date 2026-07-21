@@ -126,6 +126,57 @@ func LoadOuGroups() {
 	}
 }
 
+func LoadOuGroupSets() {
+
+	var id int
+	err := db.GetDB().Get(&id, "SELECT count(*) FROM orgunitgroupset")
+
+	if err != nil {
+		log.WithError(err).Info("Error reading organisation unit groups sets:")
+		return
+	}
+	log.WithField("ouGroupSetsCount:", id).Info("Checking base organisation unit group sets in local DB")
+
+	apiURL := config.MFLIntegratorConf.API.DHIS2BaseURL + "/organisationUnitGroupSets.json"
+	p := url.Values{}
+	p.Add("fields", "id,name,shortName")
+	p.Add("paging", "false")
+
+	ouGroupSetsURL := apiURL + "?" + p.Encode()
+	fmt.Println(ouGroupSetsURL)
+	resp, err := utils.GetWithBasicAuth(ouGroupSetsURL, config.MFLIntegratorConf.API.DHIS2User,
+		config.MFLIntegratorConf.API.DHIS2Password)
+	if err != nil {
+		log.WithError(err).Info("Failed to fetch organisation unit group sets")
+		return
+	}
+	v, _, _, err := jsonparser.Get(resp, "organisationUnitGroupSets")
+	if err != nil {
+		log.WithError(err).Error("json parser failed to get organisationUnitGroupSets key")
+		return
+	}
+	var ouGroupSets []models.OrgUnitGroupSet
+	err = json.Unmarshal(v, &ouGroupSets)
+	if err != nil {
+		fmt.Println("Error unmarshaling orgunit group sets response body:", err)
+		return
+	}
+	for i := range ouGroupSets {
+		ouGroupSets[i].UID = ouGroupSets[i].ID
+		if ouGroupSets[i].ExistsInDB() {
+			log.WithFields(log.Fields{
+				"uid":  ouGroupSets[i].UID,
+				"name": ouGroupSets[i].Name,
+			}).Info("Organisation unit group set already exists in DB")
+			continue
+		}
+		log.WithFields(
+			log.Fields{"uid": ouGroupSets[i].ID, "name": ouGroupSets[i].Name,
+				"shortName": ouGroupSets[i].ShortName}).Info("Creating New Orgunit Group Set")
+		ouGroupSets[i].NewOrgUnitGroupSet()
+	}
+}
+
 // LoadAttributes fetches OU related attributes from DHIS2 to our DB
 func LoadAttributes() {
 	apiURL := config.MFLIntegratorConf.API.DHIS2BaseURL + "/attributes.json"
@@ -947,6 +998,9 @@ func FetchFacilities2(mflId, batchId string) {
 			facilityMetadata.Parent = facility.ParentRef()
 			numberCreated++
 
+			// XXX Create OU Group Requests here before removing groups
+			ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+
 			// remove name and uid in organisationUnitGroups sent as part of metadata
 			facilityMetadata.OrganisationUnitGroups = lo.Map(
 				facilityMetadata.OrganisationUnitGroups,
@@ -993,7 +1047,8 @@ func FetchFacilities2(mflId, batchId string) {
 					"action":       "create",
 				}).WithFields(syncFields).Info("Queued facility request")
 
-				ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+				// XXX ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+
 				requestForms := MakeOrgUnitGroupsAdditionRequests(
 					ouGroupRequests,
 					dbutils.Int(fRequest.ID()),

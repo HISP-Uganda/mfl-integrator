@@ -160,6 +160,39 @@ func (og *OrgUnitGroup) NewOrgUnitGroup() {
 	}
 }
 
+type OrgUnitGroupSet struct {
+	ID        string  `db:"id" json:"id"`
+	UID       string  `db:"uid" json:"uid"`
+	Code      *string `db:"code" json:"code,omitempty"`
+	Name      string  `db:"name" json:"name"`
+	ShortName string  `db:"shortname" json:"shortName,omitempty"`
+	Created   string  `db:"created" json:"created,omitempty"`
+	Updated   string  `db:"updated" json:"updated,omitempty"`
+}
+
+func (ogs *OrgUnitGroupSet) ExistsInDB() bool {
+	dbConn := db.GetDB()
+	var count int
+	err := dbConn.Get(&count, "SELECT count(*) FROM orgunitgroupset WHERE uid = $1", ogs.UID)
+	if err != nil {
+		log.WithError(err).Info("Error reading organisation unit group set")
+		return false
+	}
+	return count > 0
+}
+
+const insertOrgunitGroupSetSQL = `
+INSERT INTO orgunitgroupset(uid, name, shortname, created, updated)
+VALUES(:uid, :name, :shortname, NOW(), NOW())`
+
+func (ogs *OrgUnitGroupSet) NewOrgUnitGroupSet() {
+	dbConn := db.GetDB()
+	_, err := dbConn.NamedExec(insertOrgunitGroupSetSQL, ogs)
+	if err != nil {
+		log.WithError(err).Info("ERROR INSERTING OrgUnit Group Set")
+	}
+}
+
 type Attribute struct {
 	ID                                string `db:"id" json:"id"`
 	UID                               string `db:"uid" json:"uid,omitempty"`

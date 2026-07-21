@@ -1,11 +1,62 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/HISP-Uganda/mfl-integrator/clients"
+	"github.com/HISP-Uganda/mfl-integrator/config"
 	"github.com/HISP-Uganda/mfl-integrator/models"
 	"github.com/HISP-Uganda/mfl-integrator/utils/dbutils"
 )
+
+func TestGetOrgUnitFromFacilityUsesIdentifierForAttributeValue(t *testing.T) {
+	originalAttributeID := config.MFLIntegratorConf.API.DHIS2OUMFLIDAttributeID
+	config.MFLIntegratorConf.API.DHIS2OUMFLIDAttributeID = "ATTR1234567"
+	t.Cleanup(func() {
+		config.MFLIntegratorConf.API.DHIS2OUMFLIDAttributeID = originalAttributeID
+	})
+
+	parentCache := map[string]models.OrganisationUnit{
+		"parent-mfl-1": {
+			ID:    "42",
+			UID:   "PARENTUID01",
+			Level: 4,
+			Path:  "/ROOT/PARENT",
+		},
+	}
+
+	facility := GetOrgUnitFromFacility(
+		clients.Facility{
+			Identifier:   "8038880",
+			MFLUID:       "jZQNbneoe9S",
+			Name:         "Test Facility",
+			ShortName:    "Test Facility",
+			HistoricalID: "FACILITY001",
+			Parent:       &clients.RefEntity{MFLUID: "parent-mfl-1"},
+		},
+		parentCache,
+		map[string]string{},
+		map[string]string{},
+	)
+
+	var attributeValues []models.AttributeValue
+	if err := json.Unmarshal(facility.AttributeValues, &attributeValues); err != nil {
+		t.Fatalf("unmarshal attribute values: %v", err)
+	}
+	if len(attributeValues) != 1 {
+		t.Fatalf("expected 1 attribute value, got %d", len(attributeValues))
+	}
+	if attributeValues[0].Value != "8038880" {
+		t.Fatalf("expected attribute value %q, got %q", "8038880", attributeValues[0].Value)
+	}
+	if attributeValues[0].Value == "jZQNbneoe9S" {
+		t.Fatalf("attribute value should not use mfl_uid")
+	}
+	if attributeValues[0].Attribute.ID != "ATTR1234567" {
+		t.Fatalf("expected attribute id %q, got %q", "ATTR1234567", attributeValues[0].Attribute.ID)
+	}
+}
 
 func TestCreateOrgUnitGroupPayloadIncludesAllDerivedGroups(t *testing.T) {
 	facility := models.OrganisationUnit{

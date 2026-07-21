@@ -139,6 +139,7 @@ func main() {
 			log.Info("Starting OrgUnits sync from base DHIS2")
 			LoadOuLevels()
 			LoadOuGroups()
+			LoadOuGroupSets()
 			LoadAttributes()
 			LoadLocations() // Load organisation units - before facility in base DHIS2 instance
 			if config.MFLIntegratorConf.Server.SyncToDHIS2Instances {

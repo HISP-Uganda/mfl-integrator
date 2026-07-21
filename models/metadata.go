@@ -63,6 +63,26 @@ func GenerateOuLevelMetadata() []MetadataOuLevel {
 	return ouLevels
 }
 
+type MetadataOuGroupSet struct {
+	ID        string `db:"id" json:"-"`
+	UID       string `db:"uid" json:"id"`
+	Code      string `db:"code" json:"code,omitempty"`
+	Name      string `db:"name" json:"name"`
+	ShortName string `db:"shortname" json:"shortName"`
+}
+
+func GenerateOuGroupSetMetadata() []MetadataOuGroupSet {
+	var ouGroupSets []MetadataOuGroupSet
+	dbConn := db.GetDB()
+	err := dbConn.Select(&ouGroupSets,
+		`SELECT uid,name, case when code is null then '' else code end, shortname  FROM orgunitgroupset`)
+	if err != nil {
+		log.WithError(err).Error("Failed to generate Org Unit Group Sets Metadata")
+		return nil
+	}
+	return ouGroupSets
+}
+
 type AttributeMetadata struct {
 	ID                        string `db:"id" json:"-"`
 	UID                       string `db:"uid" json:"id"`

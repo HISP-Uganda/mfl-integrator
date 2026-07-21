@@ -892,6 +892,12 @@ func SyncLocationsToServer(serverName string) {
 	groupsPayload["organisationUnitGroups"] = syncOuGroups
 	SendMetadata(server, groupsPayload)
 
+	// send Ou Group Sets
+	syncOuGroupSets := GenerateOuGroupSetMetadata()
+	ouGroupSetsPayload := make(map[string][]MetadataOuGroupSet)
+	ouGroupSetsPayload["organisationUnitGroupSets"] = syncOuGroupSets
+	SendMetadata(server, ouGroupSetsPayload)
+
 	// send Attributes
 	syncAttributes := GenerateAttributeMetadata()
 	attributesPayload := make(map[string][]AttributeMetadata)
