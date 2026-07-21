@@ -1000,6 +1000,11 @@ func FetchFacilities2(mflId, batchId string) {
 
 			// XXX Create OU Group Requests here before removing groups
 			ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+			log.WithFields(log.Fields{
+				"facility_uid":    facility.UID,
+				"groups_count":    len(ouGroupRequests),
+				"ouGroupRequests": ouGroupRequests,
+			}).WithFields(syncFields).Info("Prepared OU group requests for facility")
 
 			// remove name and uid in organisationUnitGroups sent as part of metadata
 			facilityMetadata.OrganisationUnitGroups = lo.Map(
@@ -1145,6 +1150,12 @@ func FetchFacilities2(mflId, batchId string) {
 		facilityMetadata := makeMetadataOu(facility)
 
 		ouGroupRequests := CreateOrgUnitGroupPayload(facilityMetadata)
+		log.WithFields(log.Fields{
+			"facility_uid":    facility.UID,
+			"groups_count":    len(ouGroupRequests),
+			"ouGroupRequests": ouGroupRequests,
+		}).WithFields(syncFields).Info(".:UPDATE:. Prepared OU group requests for facility")
+
 		requestForms := MakeOrgUnitGroupsAdditionRequests(
 			ouGroupRequests,
 			dbutils.Int(0),
@@ -1576,32 +1587,56 @@ func GetOrgUnitFromFacility(
 		facility.Geometry = geometry
 	}
 
-	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, levelOfCare)
-	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, ownership)
-	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, authority)
+	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, "facility_level", levelOfCare)
+	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, "ownership", ownership)
+	facility.OrgUnitGroups = appendDerivedOrgUnitGroup(facility.OrgUnitGroups, orgUnitGroupUIDCache, "authority", authority)
 
 	return facility
 }
 
+var orgUnitGroupLookup = models.FindOuGroupByName
+
 func appendDerivedOrgUnitGroup(
 	groups []models.OrgUnitGroup,
 	orgUnitGroupUIDCache map[string]string,
+	groupSource string,
 	groupName string,
 ) []models.OrgUnitGroup {
+	rawGroupName := groupName
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {
 		return groups
 	}
 
 	ouUID, ok := orgUnitGroupUIDCache[groupName]
+	matchedName := groupName
 	if !ok {
-		ouUID = models.GetOuGroupUIDByName(groupName)
+		group, found := orgUnitGroupLookup(groupName)
+		if found {
+			ouUID = strings.TrimSpace(group.UID)
+			if ouUID == "" {
+				ouUID = strings.TrimSpace(group.ID)
+			}
+			if strings.TrimSpace(group.Name) != "" {
+				matchedName = strings.TrimSpace(group.Name)
+			}
+		}
 		orgUnitGroupUIDCache[groupName] = ouUID
 	}
 	if ouUID == "" {
-		log.WithField("group_name", groupName).Warn("Skipping derived orgunit group with empty UID")
+		log.WithFields(log.Fields{
+			"group_source": groupSource,
+			"group_name":   groupName,
+			"raw_name":     rawGroupName,
+		}).Warn("Skipping derived orgunit group with empty UID")
 		return groups
 	}
+	log.WithFields(log.Fields{
+		"group_source": groupSource,
+		"group_name":   groupName,
+		"matched_name": matchedName,
+		"group_uid":    ouUID,
+	}).Debug("Resolved derived orgunit group")
 
 	for _, existing := range groups {
 		if existing.ID == ouUID || existing.UID == ouUID || strings.EqualFold(existing.Name, groupName) {
@@ -1609,7 +1644,7 @@ func appendDerivedOrgUnitGroup(
 		}
 	}
 
-	return append(groups, models.OrgUnitGroup{Name: groupName, UID: ouUID, ID: ouUID})
+	return append(groups, models.OrgUnitGroup{Name: matchedName, UID: ouUID, ID: ouUID})
 }
 
 func nilString(p *string) any {

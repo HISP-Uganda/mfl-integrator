@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strings"
 
 	"github.com/HISP-Uganda/mfl-integrator/db"
 	"github.com/HISP-Uganda/mfl-integrator/utils"
@@ -128,14 +129,54 @@ func (og *OrgUnitGroup) ExistsInDB() bool {
 }
 
 func GetOuGroupUIDByName(name string) string {
-	dbConn := db.GetDB()
-	var uid string
-	err := dbConn.Get(&uid, `SELECT uid FROM orgunitgroup WHERE name = $1`, name)
-	if err != nil {
-		log.WithError(err).Info("Failed to get orgunit group DBUID")
+	group, ok := FindOuGroupByName(name)
+	if !ok {
 		return ""
 	}
-	return uid
+	return group.UID
+}
+
+func FindOuGroupByName(name string) (OrgUnitGroup, bool) {
+	dbConn := db.GetDB()
+	var group OrgUnitGroup
+	trimmedName := strings.TrimSpace(name)
+	err := dbConn.Get(&group, `SELECT id, uid, name, shortname FROM orgunitgroup WHERE name = $1`, trimmedName)
+	if err == nil {
+		return group, true
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		log.WithError(err).WithField("group_name", trimmedName).Info("Failed to get orgunit group by exact name")
+		return OrgUnitGroup{}, false
+	}
+
+	normalizedName := normalizeOrgUnitGroupName(trimmedName)
+	if normalizedName == "" {
+		return OrgUnitGroup{}, false
+	}
+
+	err = dbConn.Get(
+		&group,
+		`SELECT id, uid, name, shortname
+		FROM orgunitgroup
+		WHERE regexp_replace(lower(trim(name)), '\s+', ' ', 'g') = $1
+		ORDER BY name
+		LIMIT 1`,
+		normalizedName,
+	)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.WithError(err).WithFields(log.Fields{
+				"group_name":      trimmedName,
+				"normalized_name": normalizedName,
+			}).Info("Failed to get orgunit group by normalized name")
+		}
+		return OrgUnitGroup{}, false
+	}
+	return group, true
+}
+
+func normalizeOrgUnitGroupName(name string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(name)), " ")
 }
 
 //func GetOrgUnitGroupByName(name string) *OrgUnitGroup {

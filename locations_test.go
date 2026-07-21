@@ -58,6 +58,107 @@ func TestGetOrgUnitFromFacilityUsesIdentifierForAttributeValue(t *testing.T) {
 	}
 }
 
+func TestGetOrgUnitFromFacilityResolvesDerivedGroupsWithNormalizedLookup(t *testing.T) {
+	originalLookup := orgUnitGroupLookup
+	orgUnitGroupLookup = func(name string) (models.OrgUnitGroup, bool) {
+		switch name {
+		case "HC II":
+			return models.OrgUnitGroup{Name: "HC II", UID: "LEVEL123456", ID: "LEVEL123456"}, true
+		case "private":
+			return models.OrgUnitGroup{Name: "Private", UID: "OWNERSHIP01", ID: "OWNERSHIP01"}, true
+		case "MINISTRY OF HEALTH":
+			return models.OrgUnitGroup{Name: "Ministry of Health", UID: "AUTHORITY01", ID: "AUTHORITY01"}, true
+		default:
+			return models.OrgUnitGroup{}, false
+		}
+	}
+	t.Cleanup(func() {
+		orgUnitGroupLookup = originalLookup
+	})
+
+	facility := GetOrgUnitFromFacility(
+		clients.Facility{
+			Identifier:   "8038880",
+			MFLUID:       "jZQNbneoe9S",
+			Name:         "Test Facility",
+			ShortName:    "Test Facility",
+			HistoricalID: "FACILITY001",
+			FacilityLevel: &clients.RefEntity{
+				Name: "HC II",
+			},
+			Ownership: &clients.RefEntity{
+				Name: "private",
+			},
+			Authority: &clients.RefEntity{
+				Name: "MINISTRY OF HEALTH",
+			},
+		},
+		map[string]models.OrganisationUnit{},
+		map[string]string{},
+		map[string]string{},
+	)
+
+	if len(facility.OrgUnitGroups) != 3 {
+		t.Fatalf("expected 3 org unit groups, got %d", len(facility.OrgUnitGroups))
+	}
+	expected := map[string]string{
+		"HC II":              "LEVEL123456",
+		"Private":            "OWNERSHIP01",
+		"Ministry of Health": "AUTHORITY01",
+	}
+	for _, group := range facility.OrgUnitGroups {
+		uid, ok := expected[group.Name]
+		if !ok {
+			t.Fatalf("unexpected group name %q", group.Name)
+		}
+		if group.UID != uid || group.ID != uid {
+			t.Fatalf("expected group %q uid %q, got uid=%q id=%q", group.Name, uid, group.UID, group.ID)
+		}
+	}
+}
+
+func TestGetOrgUnitFromFacilitySkipsUnresolvedDerivedGroups(t *testing.T) {
+	originalLookup := orgUnitGroupLookup
+	orgUnitGroupLookup = func(name string) (models.OrgUnitGroup, bool) {
+		if name == "HC II" {
+			return models.OrgUnitGroup{Name: "HC II", UID: "LEVEL123456", ID: "LEVEL123456"}, true
+		}
+		return models.OrgUnitGroup{}, false
+	}
+	t.Cleanup(func() {
+		orgUnitGroupLookup = originalLookup
+	})
+
+	facility := GetOrgUnitFromFacility(
+		clients.Facility{
+			Identifier:   "8038880",
+			MFLUID:       "jZQNbneoe9S",
+			Name:         "Test Facility",
+			ShortName:    "Test Facility",
+			HistoricalID: "FACILITY001",
+			FacilityLevel: &clients.RefEntity{
+				Name: "HC II",
+			},
+			Ownership: &clients.RefEntity{
+				Name: "Unknown Ownership",
+			},
+			Authority: &clients.RefEntity{
+				Name: "Unknown Authority",
+			},
+		},
+		map[string]models.OrganisationUnit{},
+		map[string]string{},
+		map[string]string{},
+	)
+
+	if len(facility.OrgUnitGroups) != 1 {
+		t.Fatalf("expected 1 org unit group, got %d", len(facility.OrgUnitGroups))
+	}
+	if facility.OrgUnitGroups[0].Name != "HC II" {
+		t.Fatalf("expected only HC II group, got %q", facility.OrgUnitGroups[0].Name)
+	}
+}
+
 func TestCreateOrgUnitGroupPayloadIncludesAllDerivedGroups(t *testing.T) {
 	facility := models.OrganisationUnit{
 		UID: "test-ou-1",
