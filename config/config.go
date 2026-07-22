@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/HISP-Uganda/mfl-integrator/buildinfo"
 	"github.com/lib/pq"
 
 	"github.com/fsnotify/fsnotify"
@@ -36,8 +37,6 @@ var (
 	MFLDHIS2ServersConfigMap = make(map[string]ServerConf)
 	ShowVersion              *bool
 )
-
-const VERSION = "1.0.3"
 
 // RedactedSummary returns a small, non-sensitive config view suitable for logs.
 func RedactedSummary() map[string]any {
@@ -102,7 +101,7 @@ func Load() error {
 	flag.Parse()
 
 	if *ShowVersion {
-		fmt.Println("MFL Integrator:", VERSION)
+		fmt.Println(buildinfo.VersionString())
 		os.Exit(0)
 	}
 

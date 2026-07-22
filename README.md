@@ -39,3 +39,11 @@ go install github.com/HISP-Uganda/mfl-integrator
 ```
 
 This will create a new executable in $GOPATH/bin called `mfl-integrator`. 
+
+To embed build metadata in local builds, use linker flags or the provided Makefile target. The binary supports:
+
+```bash
+mfl-integrator --version
+```
+
+and prints the version, build number, commit, and build date after the splash banner.
