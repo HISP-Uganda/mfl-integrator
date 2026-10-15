@@ -872,15 +872,18 @@ func GenerateMetadataPayload(newFacility dbutils.MapAnything) []MetadataObject {
 		switch k {
 		case "extras", "url", "uid", "mflId", "mflParent", "mflUID", "id", "organisationUnitGroups":
 		case "geometry":
-			geoType, ok := newFacility[k].(map[string]interface{})["type"]
-			if ok {
-				if geoType != "" {
-					m := MetadataObject{Operation: "add", Path: fmt.Sprintf("/%s", k), Value: newFacility[k]}
-					metaDataSlice = append(metaDataSlice, m)
-				}
-
+			geometry, ok := newFacility[k].(map[string]interface{})
+			if !ok {
+				log.WithField("type", fmt.Sprintf("%T", newFacility[k])).Warn("Skipping malformed geometry metadata value")
+				continue
 			}
-
+			geoType, ok := geometry["type"].(string)
+			if !ok || geoType == "" {
+				log.WithField("type", fmt.Sprintf("%T", geometry["type"])).Warn("Skipping geometry metadata without a valid type")
+				continue
+			}
+			m := MetadataObject{Operation: "add", Path: fmt.Sprintf("/%s", k), Value: newFacility[k]}
+			metaDataSlice = append(metaDataSlice, m)
 		default:
 			m := MetadataObject{Operation: "add", Path: fmt.Sprintf("/%s", k), Value: newFacility[k]}
 			metaDataSlice = append(metaDataSlice, m)

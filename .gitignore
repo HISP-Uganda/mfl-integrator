@@ -28,3 +28,5 @@ Thumbs.db
 
 # Dependency directories
 vendor/
+
+config.toml
